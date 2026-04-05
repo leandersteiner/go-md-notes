@@ -548,6 +548,7 @@ function App() {
                                 className="main-editor-cm"
                                 basicSetup={{
                                     foldGutter: false,
+                                    lineNumbers: false,
                                     dropCursor: false,
                                 }}
                             />
