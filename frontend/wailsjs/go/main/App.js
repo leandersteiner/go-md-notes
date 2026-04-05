@@ -18,8 +18,16 @@ export function DeletePath(arg1) {
   return window['go']['main']['App']['DeletePath'](arg1);
 }
 
+export function ExportRecoveryKey() {
+  return window['go']['main']['App']['ExportRecoveryKey']();
+}
+
 export function Greet(arg1) {
   return window['go']['main']['App']['Greet'](arg1);
+}
+
+export function ImportRecoveryKey(arg1) {
+  return window['go']['main']['App']['ImportRecoveryKey'](arg1);
 }
 
 export function InitWorkspace() {
@@ -28,6 +36,10 @@ export function InitWorkspace() {
 
 export function LoadNote(arg1, arg2) {
   return window['go']['main']['App']['LoadNote'](arg1, arg2);
+}
+
+export function ReencryptNotes(arg1, arg2) {
+  return window['go']['main']['App']['ReencryptNotes'](arg1, arg2);
 }
 
 export function RefreshWorkspace() {
@@ -40,4 +52,12 @@ export function RenamePath(arg1, arg2) {
 
 export function SaveNote(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['SaveNote'](arg1, arg2, arg3, arg4);
+}
+
+export function SetupGeneratedKey() {
+  return window['go']['main']['App']['SetupGeneratedKey']();
+}
+
+export function SetupManualPassphrase() {
+  return window['go']['main']['App']['SetupManualPassphrase']();
 }

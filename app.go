@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -15,6 +16,7 @@ import (
 	"strings"
 
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/zalando/go-keyring"
 )
 
 // App struct
@@ -36,7 +38,8 @@ type FileNode struct {
 }
 
 type AppConfig struct {
-	NotesDir string `json:"notesDir"`
+	NotesDir     string `json:"notesDir"`
+	SecurityMode string `json:"securityMode"`
 }
 
 type NoteDocument struct {
@@ -45,9 +48,16 @@ type NoteDocument struct {
 }
 
 type WorkspaceState struct {
-	NotesDir   string     `json:"notesDir"`
-	Tree       []FileNode `json:"tree"`
-	DirtyPaths []string   `json:"dirtyPaths"`
+	NotesDir           string     `json:"notesDir"`
+	Tree               []FileNode `json:"tree"`
+	DirtyPaths         []string   `json:"dirtyPaths"`
+	SecurityMode       string     `json:"securityMode"`
+	SecurityConfigured bool       `json:"securityConfigured"`
+}
+
+type ReencryptResult struct {
+	UpdatedFiles   int `json:"updatedFiles"`
+	UpdatedRegions int `json:"updatedRegions"`
 }
 
 var attrRegex = regexp.MustCompile(`([a-zA-Z]+)="([^"]*)"`)
@@ -55,6 +65,10 @@ var attrRegex = regexp.MustCompile(`([a-zA-Z]+)="([^"]*)"`)
 const noteMetaPrefix = "<!-- go-md-notes:note"
 const encryptedRegionPrefix = "<!-- go-md-notes:encrypted"
 const encryptedRegionFooter = "<!-- /go-md-notes:encrypted -->"
+const securityModeManual = "manual"
+const securityModeGenerated = "generated"
+const keyringService = "go-md-notes"
+const keyringUser = "default-encryption-key"
 
 // NewApp creates a new App application struct
 func NewApp() *App {
@@ -104,9 +118,11 @@ func (a *App) InitWorkspace() (WorkspaceState, error) {
 	}
 
 	return WorkspaceState{
-		NotesDir:   cfg.NotesDir,
-		Tree:       tree,
-		DirtyPaths: dirtyPaths,
+		NotesDir:           cfg.NotesDir,
+		Tree:               tree,
+		DirtyPaths:         dirtyPaths,
+		SecurityMode:       cfg.SecurityMode,
+		SecurityConfigured: isSecurityConfigured(cfg.SecurityMode),
 	}, nil
 }
 
@@ -121,7 +137,11 @@ func (a *App) ChooseNotesDir() (WorkspaceState, error) {
 		return WorkspaceState{}, errors.New("notes folder not selected")
 	}
 
-	cfg := AppConfig{NotesDir: dir}
+	cfg, err := loadConfig()
+	if err != nil {
+		return WorkspaceState{}, err
+	}
+	cfg.NotesDir = dir
 	if err := saveConfig(cfg); err != nil {
 		return WorkspaceState{}, err
 	}
@@ -136,9 +156,11 @@ func (a *App) ChooseNotesDir() (WorkspaceState, error) {
 	}
 
 	return WorkspaceState{
-		NotesDir:   cfg.NotesDir,
-		Tree:       tree,
-		DirtyPaths: dirtyPaths,
+		NotesDir:           cfg.NotesDir,
+		Tree:               tree,
+		DirtyPaths:         dirtyPaths,
+		SecurityMode:       cfg.SecurityMode,
+		SecurityConfigured: isSecurityConfigured(cfg.SecurityMode),
 	}, nil
 }
 
@@ -160,10 +182,142 @@ func (a *App) RefreshWorkspace() (WorkspaceState, error) {
 		return WorkspaceState{}, err
 	}
 	return WorkspaceState{
-		NotesDir:   cfg.NotesDir,
-		Tree:       tree,
-		DirtyPaths: dirtyPaths,
+		NotesDir:           cfg.NotesDir,
+		Tree:               tree,
+		DirtyPaths:         dirtyPaths,
+		SecurityMode:       cfg.SecurityMode,
+		SecurityConfigured: isSecurityConfigured(cfg.SecurityMode),
 	}, nil
+}
+
+func (a *App) SetupGeneratedKey() (WorkspaceState, error) {
+	cfg, err := loadConfig()
+	if err != nil {
+		return WorkspaceState{}, err
+	}
+
+	passphrase, err := generateStrongPassphrase()
+	if err != nil {
+		return WorkspaceState{}, err
+	}
+	if err := keyring.Set(keyringService, keyringUser, passphrase); err != nil {
+		return WorkspaceState{}, err
+	}
+	cfg.SecurityMode = securityModeGenerated
+	if err := saveConfig(cfg); err != nil {
+		return WorkspaceState{}, err
+	}
+
+	return a.RefreshWorkspace()
+}
+
+func (a *App) SetupManualPassphrase() (WorkspaceState, error) {
+	cfg, err := loadConfig()
+	if err != nil {
+		return WorkspaceState{}, err
+	}
+	cfg.SecurityMode = securityModeManual
+	if err := saveConfig(cfg); err != nil {
+		return WorkspaceState{}, err
+	}
+	_ = keyring.Delete(keyringService, keyringUser)
+
+	return a.RefreshWorkspace()
+}
+
+func (a *App) ExportRecoveryKey() (string, error) {
+	cfg, err := loadConfig()
+	if err != nil {
+		return "", err
+	}
+	if cfg.SecurityMode != securityModeGenerated {
+		return "", errors.New("recovery key is only available in generated mode")
+	}
+	secret, err := keyring.Get(keyringService, keyringUser)
+	if err != nil {
+		return "", fmt.Errorf("failed to read generated key from keychain: %w", err)
+	}
+	return secret, nil
+}
+
+func (a *App) ImportRecoveryKey(secret string) (WorkspaceState, error) {
+	trimmed := strings.TrimSpace(secret)
+	if len(trimmed) < 24 {
+		return WorkspaceState{}, errors.New("recovery key is too short")
+	}
+	if err := keyring.Set(keyringService, keyringUser, trimmed); err != nil {
+		return WorkspaceState{}, fmt.Errorf("failed to store recovery key in keychain: %w", err)
+	}
+
+	cfg, err := loadConfig()
+	if err != nil {
+		return WorkspaceState{}, err
+	}
+	cfg.SecurityMode = securityModeGenerated
+	if err := saveConfig(cfg); err != nil {
+		return WorkspaceState{}, err
+	}
+	return a.RefreshWorkspace()
+}
+
+func (a *App) ReencryptNotes(oldPassphrase string, newPassphrase string) (ReencryptResult, error) {
+	oldPass := strings.TrimSpace(oldPassphrase)
+	newPass := strings.TrimSpace(newPassphrase)
+	if oldPass == "" || newPass == "" {
+		return ReencryptResult{}, errors.New("both old and new passphrases are required")
+	}
+
+	cfg, err := loadConfig()
+	if err != nil {
+		return ReencryptResult{}, err
+	}
+	if !isExistingDir(cfg.NotesDir) {
+		return ReencryptResult{}, errors.New("notes folder not configured")
+	}
+
+	result := ReencryptResult{}
+	err = filepath.WalkDir(cfg.NotesDir, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if d.IsDir() {
+			if strings.HasPrefix(d.Name(), ".") && path != cfg.NotesDir {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if strings.HasPrefix(d.Name(), ".") || !isSupportedNoteExtension(d.Name()) {
+			return nil
+		}
+
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		content := string(data)
+		if !strings.Contains(content, encryptedRegionPrefix) {
+			return nil
+		}
+
+		updated, regions, err := reencryptContent(content, oldPass, newPass)
+		if err != nil {
+			return fmt.Errorf("%s: %w", path, err)
+		}
+		if regions == 0 {
+			return nil
+		}
+		if err := os.WriteFile(path, []byte(updated), 0o644); err != nil {
+			return err
+		}
+		result.UpdatedFiles++
+		result.UpdatedRegions += regions
+		return nil
+	})
+	if err != nil {
+		return ReencryptResult{}, err
+	}
+
+	return result, nil
 }
 
 func (a *App) RenamePath(path string, newName string) (string, error) {
@@ -278,6 +432,10 @@ func (a *App) SaveNote(path string, blocks []Block, password string, noteSensiti
 	if noteSensitive {
 		lines = append(lines, fmt.Sprintf(`%s sensitive="true" -->`, noteMetaPrefix))
 	}
+	effectivePassphrase, hasPassphrase, err := resolveEncryptionPassphrase(password)
+	if err != nil {
+		return err
+	}
 
 	for i := 0; i < len(blocks); {
 		block := blocks[i]
@@ -301,10 +459,10 @@ func (a *App) SaveNote(path string, blocks []Block, password string, noteSensiti
 		}
 		segmentText := strings.Join(segmentLines, "\n")
 
-		if password == "" {
+		if !hasPassphrase {
 			return fmt.Errorf("password required for sensitive block %s", block.ID)
 		}
-		encrypted, err := EncryptWithPassword([]byte(segmentText), password)
+		encrypted, err := EncryptWithPassword([]byte(segmentText), effectivePassphrase)
 		if err != nil {
 			return fmt.Errorf("encrypt block %s: %w", block.ID, err)
 		}
@@ -334,6 +492,10 @@ func (a *App) LoadNote(path string, password string) (NoteDocument, error) {
 	}
 
 	content := string(data)
+	effectivePassphrase, hasPassphrase, err := resolveEncryptionPassphrase(password)
+	if err != nil {
+		return NoteDocument{}, err
+	}
 
 	lines := strings.Split(content, "\n")
 	result := make([]Block, 0)
@@ -378,7 +540,7 @@ func (a *App) LoadNote(path string, password string) (NoteDocument, error) {
 				})
 			}
 
-			if strings.TrimSpace(password) == "" {
+			if !hasPassphrase {
 				appendRawEncryptedRegion()
 				continue
 			}
@@ -393,7 +555,7 @@ func (a *App) LoadNote(path string, password string) (NoteDocument, error) {
 				SaltB64:    attrs["salt"],
 				NonceB64:   attrs["nonce"],
 				Ciphertext: ciphertext,
-			}, password)
+			}, effectivePassphrase)
 			if err != nil {
 				appendRawEncryptedRegion()
 				continue
@@ -444,6 +606,71 @@ func parseAttrs(line string) map[string]string {
 		}
 	}
 	return attrs
+}
+
+func reencryptContent(content string, oldPass string, newPass string) (string, int, error) {
+	lines := strings.Split(content, "\n")
+	out := make([]string, 0, len(lines))
+	updatedRegions := 0
+
+	for i := 0; i < len(lines); i++ {
+		line := lines[i]
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, encryptedRegionPrefix) {
+			out = append(out, line)
+			continue
+		}
+
+		attrs := parseAttrs(trimmed)
+		bodyLines := make([]string, 0)
+		i++
+		for ; i < len(lines); i++ {
+			if strings.TrimSpace(lines[i]) == encryptedRegionFooter {
+				break
+			}
+			bodyLines = append(bodyLines, lines[i])
+		}
+		if i >= len(lines) {
+			return "", 0, errors.New("malformed encrypted region: missing footer")
+		}
+
+		ciphertext, err := base64.StdEncoding.DecodeString(strings.TrimSpace(strings.Join(bodyLines, "")))
+		if err != nil {
+			return "", 0, fmt.Errorf("failed to decode encrypted region: %w", err)
+		}
+		plaintext, err := DecryptWithPassword(EncryptedBlock{
+			SaltB64:    attrs["salt"],
+			NonceB64:   attrs["nonce"],
+			Ciphertext: ciphertext,
+		}, oldPass)
+		if err != nil {
+			return "", 0, errors.New("old passphrase did not decrypt encrypted region")
+		}
+
+		enc, err := EncryptWithPassword(plaintext, newPass)
+		if err != nil {
+			return "", 0, err
+		}
+
+		out = append(out,
+			fmt.Sprintf(`%s salt="%s" nonce="%s" -->`, encryptedRegionPrefix, enc.SaltB64, enc.NonceB64),
+			base64.StdEncoding.EncodeToString(enc.Ciphertext),
+			encryptedRegionFooter,
+		)
+		updatedRegions++
+	}
+
+	return strings.Join(out, "\n"), updatedRegions, nil
+}
+
+func isSupportedNoteExtension(name string) bool {
+	ext := strings.ToLower(filepath.Ext(name))
+	switch ext {
+	case ".md", ".markdown", ".mdx", ".txt":
+		return true
+	default:
+		return false
+	}
 }
 
 func buildFileTree(root string) ([]FileNode, error) {
@@ -514,7 +741,7 @@ func loadConfig() (AppConfig, error) {
 	}
 	data, err := os.ReadFile(configPath)
 	if errors.Is(err, os.ErrNotExist) {
-		return AppConfig{}, nil
+		return AppConfig{SecurityMode: "unset"}, nil
 	}
 	if err != nil {
 		return AppConfig{}, err
@@ -524,10 +751,16 @@ func loadConfig() (AppConfig, error) {
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return AppConfig{}, err
 	}
+	if cfg.SecurityMode == "" {
+		cfg.SecurityMode = "unset"
+	}
 	return cfg, nil
 }
 
 func saveConfig(cfg AppConfig) error {
+	if strings.TrimSpace(cfg.SecurityMode) == "" {
+		cfg.SecurityMode = "unset"
+	}
 	configPath, err := configFilePath()
 	if err != nil {
 		return err
@@ -540,6 +773,46 @@ func saveConfig(cfg AppConfig) error {
 		return err
 	}
 	return os.WriteFile(configPath, data, 0o644)
+}
+
+func resolveEncryptionPassphrase(input string) (string, bool, error) {
+	cfg, err := loadConfig()
+	if err != nil {
+		return "", false, err
+	}
+
+	switch cfg.SecurityMode {
+	case securityModeGenerated:
+		secret, err := keyring.Get(keyringService, keyringUser)
+		if err != nil {
+			return "", false, fmt.Errorf("failed to read generated key from keychain: %w", err)
+		}
+		return secret, true, nil
+	case securityModeManual, "unset":
+		trimmed := strings.TrimSpace(input)
+		if trimmed == "" {
+			return "", false, nil
+		}
+		return input, true, nil
+	default:
+		trimmed := strings.TrimSpace(input)
+		if trimmed == "" {
+			return "", false, nil
+		}
+		return input, true, nil
+	}
+}
+
+func isSecurityConfigured(mode string) bool {
+	return mode == securityModeGenerated || mode == securityModeManual
+}
+
+func generateStrongPassphrase() (string, error) {
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(buf), nil
 }
 
 func resolveNotePath(path string) string {

@@ -49,6 +49,12 @@
     margin-left: auto;
 }
 
+.security-indicator {
+    color: #9fc3df;
+    font-size: 0.88rem;
+    padding: 0 0.2rem;
+}
+
 .editor-container {
     overflow: auto;
     padding: 0;
@@ -339,6 +345,12 @@
     line-height: 1.35;
 }
 
+.dialog-text {
+    color: #9fb6ca;
+    margin-bottom: 0.8rem;
+    line-height: 1.35;
+}
+
 .dialog-input {
     width: 100%;
     box-sizing: border-box;
@@ -357,6 +369,41 @@
     display: flex;
     justify-content: flex-end;
     gap: 0.45rem;
+}
+
+.security-setup-panel {
+    max-width: 560px;
+}
+
+.security-settings-panel {
+    max-width: 640px;
+}
+
+.security-settings-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+}
+
+.dialog-textarea {
+    width: 100%;
+    min-height: 5.8rem;
+    box-sizing: border-box;
+    border-radius: 6px;
+    border: 1px solid #3a4f63;
+    background: #0d141c;
+    color: #e9f0f6;
+    padding: 0.5rem 0.55rem;
+    resize: vertical;
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    user-select: text;
+    -webkit-user-select: text;
+}
+
+.setup-btn {
+    width: 100%;
+    margin-top: 0.45rem;
+    text-align: left;
 }
 
 .hint {

@@ -84,10 +84,26 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class ReencryptResult {
+	    updatedFiles: number;
+	    updatedRegions: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ReencryptResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.updatedFiles = source["updatedFiles"];
+	        this.updatedRegions = source["updatedRegions"];
+	    }
+	}
 	export class WorkspaceState {
 	    notesDir: string;
 	    tree: FileNode[];
 	    dirtyPaths: string[];
+	    securityMode: string;
+	    securityConfigured: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new WorkspaceState(source);
@@ -98,6 +114,8 @@ export namespace main {
 	        this.notesDir = source["notesDir"];
 	        this.tree = this.convertValues(source["tree"], FileNode);
 	        this.dirtyPaths = source["dirtyPaths"];
+	        this.securityMode = source["securityMode"];
+	        this.securityConfigured = source["securityConfigured"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

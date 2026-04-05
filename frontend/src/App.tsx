@@ -6,10 +6,15 @@ import {
     CreateFile,
     CreateFolder,
     DeletePath,
+    ExportRecoveryKey,
+    ImportRecoveryKey,
     InitWorkspace,
     LoadNote,
+    ReencryptNotes,
     RefreshWorkspace,
     RenamePath,
+    SetupGeneratedKey,
+    SetupManualPassphrase,
     SaveNote
 } from "../wailsjs/go/main/App";
 import CodeMirror from "@uiw/react-codemirror";
@@ -31,6 +36,8 @@ type WorkspaceState = {
     notesDir: string;
     tree: FileNode[];
     dirtyPaths?: string[];
+    securityMode: string;
+    securityConfigured: boolean;
 }
 
 type ContextMenuState = {
@@ -67,7 +74,14 @@ function App() {
     const [notesDir, setNotesDir] = useState("");
     const [tree, setTree] = useState<FileNode[]>([]);
     const [activeFilePath, setActiveFilePath] = useState("");
+    const [securityMode, setSecurityMode] = useState("unset");
+    const [showSecuritySetup, setShowSecuritySetup] = useState(false);
+    const [showSecuritySettings, setShowSecuritySettings] = useState(false);
     const [password, setPassword] = useState("");
+    const [recoveryKey, setRecoveryKey] = useState("");
+    const [importRecoveryKey, setImportRecoveryKey] = useState("");
+    const [migrationOldPass, setMigrationOldPass] = useState("");
+    const [migrationNewPass, setMigrationNewPass] = useState("");
     const [noteSensitive, setNoteSensitive] = useState(false);
     const [status, setStatus] = useState("Ready");
     const [editorText, setEditorText] = useState("# New note");
@@ -112,6 +126,7 @@ function App() {
             try {
                 const workspace = await InitWorkspace();
                 applyWorkspace(workspace);
+                setShowSecuritySetup(!workspace.securityConfigured);
                 setStatus("Workspace ready");
             } catch (e) {
                 setStatus(`Workspace setup failed: ${String(e)}`);
@@ -137,6 +152,61 @@ function App() {
             document.removeEventListener("click", closeContextMenu);
         };
     }, []);
+
+    const setupGenerated = async () => {
+        try {
+            const workspace = await SetupGeneratedKey();
+            applyWorkspace(workspace);
+            setShowSecuritySetup(false);
+            setStatus("Generated key saved to system keychain");
+        } catch (e) {
+            setStatus(`Key setup failed: ${String(e)}`);
+        }
+    };
+
+    const setupManual = async () => {
+        try {
+            const workspace = await SetupManualPassphrase();
+            applyWorkspace(workspace);
+            setShowSecuritySetup(false);
+            setStatus("Manual passphrase mode enabled");
+        } catch (e) {
+            setStatus(`Setup failed: ${String(e)}`);
+        }
+    };
+
+    const exportRecoveryKey = async () => {
+        try {
+            const key = await ExportRecoveryKey();
+            setRecoveryKey(key);
+            setStatus("Recovery key exported");
+        } catch (e) {
+            setStatus(`Export failed: ${String(e)}`);
+        }
+    };
+
+    const importRecovery = async () => {
+        try {
+            const workspace = await ImportRecoveryKey(importRecoveryKey);
+            applyWorkspace(workspace);
+            setImportRecoveryKey("");
+            setStatus("Recovery key imported and generated mode enabled");
+        } catch (e) {
+            setStatus(`Import failed: ${String(e)}`);
+        }
+    };
+
+    const reencryptAllNotes = async () => {
+        try {
+            const result = await ReencryptNotes(migrationOldPass, migrationNewPass);
+            setMigrationOldPass("");
+            setMigrationNewPass("");
+            setStatus(`Re-encrypted ${result.updatedRegions} regions in ${result.updatedFiles} files`);
+            await reloadTree();
+        } catch (e) {
+            setStatus(`Re-encryption failed: ${String(e)}`);
+        }
+    };
 
     const reloadTree = async () => {
         try {
@@ -329,22 +399,29 @@ function App() {
     return (
         <div id="App" className="app-shell">
             <header className="toolbar">
-                <input
-                    className="toolbar-input"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    onKeyDown={(event) => {
-                        if (event.key === "Enter" && activeFilePath) {
-                            event.preventDefault();
-                            void loadFile(activeFilePath);
-                        }
-                    }}
-                    type="password"
-                    placeholder="Password for sensitive blocks"
-                />
+                {securityMode === "manual" ? (
+                    <input
+                        className="toolbar-input"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        onKeyDown={(event) => {
+                            if (event.key === "Enter" && activeFilePath) {
+                                event.preventDefault();
+                                void loadFile(activeFilePath);
+                            }
+                        }}
+                        type="password"
+                        placeholder="Passphrase (manual mode)"
+                    />
+                ) : securityMode === "generated" ? (
+                    <span className="security-indicator">Keychain mode</span>
+                ) : (
+                    <span className="security-indicator">Security mode not set</span>
+                )}
                 <button className="toolbar-btn" onClick={chooseFolder}>Choose Folder</button>
                 <button className="toolbar-btn" onClick={reloadTree}>Refresh Tree</button>
                 <button className="toolbar-btn" onClick={save} disabled={!activeFilePath}>Save</button>
+                <button className="toolbar-btn" onClick={() => setShowSecuritySettings(true)}>Security</button>
                 <button className="toolbar-btn" onClick={() => setNoteSensitive((v) => !v)}>
                     {noteSensitive ? "Full Note: Sensitive" : "Full Note: Public"}
                 </button>
@@ -637,6 +714,92 @@ function App() {
                     </div>
                 </div>
             ) : null}
+            {showSecuritySetup ? (
+                <div className="dialog-backdrop">
+                    <div className="dialog-panel security-setup-panel">
+                        <div className="dialog-title">Choose Encryption Setup</div>
+                        <div className="dialog-text">
+                            Decide once how sensitive note regions are unlocked on this device.
+                        </div>
+                        <button className="toolbar-btn setup-btn" onClick={() => void setupGenerated()}>
+                            Generate secure key and store in OS keychain (Recommended)
+                        </button>
+                        <button className="toolbar-btn setup-btn" onClick={() => void setupManual()}>
+                            Always enter passphrase manually
+                        </button>
+                    </div>
+                </div>
+            ) : null}
+            {showSecuritySettings ? (
+                <div className="dialog-backdrop" onClick={() => setShowSecuritySettings(false)}>
+                    <div className="dialog-panel security-settings-panel" onClick={(event) => event.stopPropagation()}>
+                        <div className="dialog-title">Security Settings</div>
+                        <div className="dialog-text">Current mode: <strong>{securityMode || "unset"}</strong></div>
+                        <div className="security-settings-grid">
+                            <button className="toolbar-btn setup-btn" onClick={() => void setupGenerated()}>
+                                Switch to generated keychain mode
+                            </button>
+                            <button className="toolbar-btn setup-btn" onClick={() => void setupManual()}>
+                                Switch to manual passphrase mode
+                            </button>
+                            {securityMode === "generated" ? (
+                                <>
+                                    <button className="toolbar-btn setup-btn" onClick={() => void exportRecoveryKey()}>
+                                        Export recovery key
+                                    </button>
+                                    {recoveryKey ? (
+                                        <textarea
+                                            className="dialog-textarea"
+                                            value={recoveryKey}
+                                            readOnly
+                                        />
+                                    ) : null}
+                                </>
+                            ) : null}
+                            <input
+                                className="dialog-input"
+                                value={importRecoveryKey}
+                                onChange={(event) => setImportRecoveryKey(event.target.value)}
+                                placeholder="Paste recovery key to import"
+                            />
+                            <button
+                                className="toolbar-btn setup-btn"
+                                onClick={() => void importRecovery()}
+                                disabled={!importRecoveryKey.trim()}
+                            >
+                                Import recovery key
+                            </button>
+                            <div className="dialog-text">
+                                Re-encrypt all existing encrypted regions (for mode/passphrase migrations).
+                            </div>
+                            <input
+                                className="dialog-input"
+                                type="password"
+                                value={migrationOldPass}
+                                onChange={(event) => setMigrationOldPass(event.target.value)}
+                                placeholder="Old passphrase"
+                            />
+                            <input
+                                className="dialog-input"
+                                type="password"
+                                value={migrationNewPass}
+                                onChange={(event) => setMigrationNewPass(event.target.value)}
+                                placeholder="New passphrase"
+                            />
+                            <button
+                                className="toolbar-btn setup-btn"
+                                onClick={() => void reencryptAllNotes()}
+                                disabled={!migrationOldPass.trim() || !migrationNewPass.trim()}
+                            >
+                                Re-encrypt notes
+                            </button>
+                        </div>
+                        <div className="dialog-actions">
+                            <button className="toolbar-btn" onClick={() => setShowSecuritySettings(false)}>Close</button>
+                        </div>
+                    </div>
+                </div>
+            ) : null}
             <div className="hint">
                 Single pane editor. Inline sensitive sections use markers: &lt;!-- sensitive:start --&gt; / &lt;!-- sensitive:end --&gt;.
                 Shortcuts: Ctrl/Cmd+S save, Ctrl/Cmd+Shift+O choose folder, Ctrl/Cmd+Shift+R refresh tree, Ctrl/Cmd+Shift+P toggle full-note sensitivity.
@@ -647,6 +810,7 @@ function App() {
     function applyWorkspace(workspace: WorkspaceState) {
         setNotesDir(workspace.notesDir);
         setTree(workspace.tree ?? []);
+        setSecurityMode(workspace.securityMode || "unset");
         const dirtyMap: Record<string, boolean> = {};
         for (const p of workspace.dirtyPaths ?? []) {
             dirtyMap[p] = true;
