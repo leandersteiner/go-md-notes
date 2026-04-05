@@ -525,6 +525,8 @@ function App() {
                                     codeLanguages: languages,
                                 }),
                                 atxHeadingLineDecorations,
+                                fencedCodeLineDecorations,
+                                inlineCodeDecorations,
                                 EditorView.lineWrapping,
                                 highlightActiveLine(),
                                 highlightActiveLineGutter(),
@@ -581,6 +583,30 @@ function App() {
                                         fontSize: "1em",
                                         fontWeight: "700",
                                         color: "#c6d8e8",
+                                    },
+                                    ".cm-line.cm-codeblock-start, .cm-line.cm-codeblock-mid, .cm-line.cm-codeblock-end": {
+                                        backgroundColor: "#111c27",
+                                        borderLeft: "1px solid #243848",
+                                        borderRight: "1px solid #243848",
+                                    },
+                                    ".cm-line.cm-codeblock-start": {
+                                        borderTop: "1px solid #243848",
+                                        borderTopLeftRadius: "6px",
+                                        borderTopRightRadius: "6px",
+                                        marginTop: "0.2rem",
+                                    },
+                                    ".cm-line.cm-codeblock-end": {
+                                        borderBottom: "1px solid #243848",
+                                        borderBottomLeftRadius: "6px",
+                                        borderBottomRightRadius: "6px",
+                                        marginBottom: "0.2rem",
+                                    },
+                                    ".cm-inline-code-pill": {
+                                        backgroundColor: "#182532",
+                                        border: "1px solid #2a4255",
+                                        borderRadius: "4px",
+                                        padding: "0 0.2em",
+                                        color: "#d8e8f7",
                                     },
                                     ".cm-cursor, .cm-dropCursor": {
                                         borderLeftColor: "#f3f8ff",
@@ -922,6 +948,129 @@ const atxHeadingLineDecorations = ViewPlugin.fromClass(class {
 }, {
     decorations: (value) => value.decorations,
 });
+
+const fencedCodeLineDecorations = ViewPlugin.fromClass(class {
+    decorations;
+
+    constructor(view: EditorView) {
+        this.decorations = this.buildDecorations(view);
+    }
+
+    update(update: ViewUpdate) {
+        if (update.docChanged || update.viewportChanged) {
+            this.decorations = this.buildDecorations(update.view);
+        }
+    }
+
+    buildDecorations(view: EditorView) {
+        const builder = new RangeSetBuilder<Decoration>();
+        const lineCount = view.state.doc.lines;
+
+        let inFence = false;
+        let fenceChar = "";
+        let fenceLen = 0;
+
+        for (let lineNo = 1; lineNo <= lineCount; lineNo++) {
+            const line = view.state.doc.line(lineNo);
+            if (!inFence) {
+                const open = parseFenceOpen(line.text);
+                if (!open) {
+                    continue;
+                }
+                inFence = true;
+                fenceChar = open.char;
+                fenceLen = open.length;
+                builder.add(line.from, line.from, Decoration.line({class: "cm-codeblock-start"}));
+                continue;
+            }
+
+            if (isFenceClose(line.text, fenceChar, fenceLen)) {
+                builder.add(line.from, line.from, Decoration.line({class: "cm-codeblock-end"}));
+                inFence = false;
+                fenceChar = "";
+                fenceLen = 0;
+                continue;
+            }
+
+            builder.add(line.from, line.from, Decoration.line({class: "cm-codeblock-mid"}));
+        }
+
+        return builder.finish();
+    }
+}, {
+    decorations: (value) => value.decorations,
+});
+
+const inlineCodeDecorations = ViewPlugin.fromClass(class {
+    decorations;
+
+    constructor(view: EditorView) {
+        this.decorations = this.buildDecorations(view);
+    }
+
+    update(update: ViewUpdate) {
+        if (update.docChanged || update.viewportChanged) {
+            this.decorations = this.buildDecorations(update.view);
+        }
+    }
+
+    buildDecorations(view: EditorView) {
+        const builder = new RangeSetBuilder<Decoration>();
+        const lineCount = view.state.doc.lines;
+
+        let inFence = false;
+        let fenceChar = "";
+        let fenceLen = 0;
+
+        for (let lineNo = 1; lineNo <= lineCount; lineNo++) {
+            const line = view.state.doc.line(lineNo);
+
+            if (!inFence) {
+                const open = parseFenceOpen(line.text);
+                if (open) {
+                    inFence = true;
+                    fenceChar = open.char;
+                    fenceLen = open.length;
+                    continue;
+                }
+            } else {
+                if (isFenceClose(line.text, fenceChar, fenceLen)) {
+                    inFence = false;
+                    fenceChar = "";
+                    fenceLen = 0;
+                }
+                continue;
+            }
+
+            const re = /`[^`\n]+`/g;
+            let match: RegExpExecArray | null;
+            while ((match = re.exec(line.text)) !== null) {
+                const start = line.from + match.index;
+                const end = start + match[0].length;
+                builder.add(start, end, Decoration.mark({class: "cm-inline-code-pill"}));
+            }
+        }
+
+        return builder.finish();
+    }
+}, {
+    decorations: (value) => value.decorations,
+});
+
+const parseFenceOpen = (line: string): {char: string; length: number} | null => {
+    const match = line.match(/^[ \t]{0,3}(`{3,}|~{3,})/);
+    if (!match) return null;
+    return {
+        char: match[1][0],
+        length: match[1].length,
+    };
+};
+
+const isFenceClose = (line: string, marker: string, minLen: number): boolean => {
+    const escaped = marker === "`" ? "\\`" : "~";
+    const re = new RegExp(`^[ \\t]{0,3}${escaped}{${minLen},}[ \\t]*$`);
+    return re.test(line);
+};
 
 const parseSensitiveBlocksFromLines = (lines: string[], noteSensitive: boolean): Block[] => {
     const withIDs = lines.map((line) => ({
