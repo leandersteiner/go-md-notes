@@ -3,11 +3,17 @@ package main
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
+	"runtime"
+	"slices"
 	"strings"
+
+	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // App struct
@@ -21,9 +27,25 @@ type Block struct {
 	Sensitive bool   `json:"sensitive"`
 }
 
+type FileNode struct {
+	Name     string     `json:"name"`
+	Path     string     `json:"path"`
+	IsDir    bool       `json:"isDir"`
+	Children []FileNode `json:"children,omitempty"`
+}
+
+type AppConfig struct {
+	NotesDir string `json:"notesDir"`
+}
+
 type NoteDocument struct {
 	Blocks        []Block `json:"blocks"`
 	NoteSensitive bool    `json:"noteSensitive"`
+}
+
+type WorkspaceState struct {
+	NotesDir string     `json:"notesDir"`
+	Tree     []FileNode `json:"tree"`
 }
 
 var attrRegex = regexp.MustCompile(`([a-zA-Z]+)="([^"]*)"`)
@@ -48,10 +70,90 @@ func (a *App) Greet(name string) string {
 	return fmt.Sprintf("Hello %s, It's show time!", name)
 }
 
+func (a *App) InitWorkspace() (WorkspaceState, error) {
+	cfg, err := loadConfig()
+	if err != nil {
+		return WorkspaceState{}, err
+	}
+
+	if !isExistingDir(cfg.NotesDir) {
+		dir, err := wailsruntime.OpenDirectoryDialog(a.ctx, wailsruntime.OpenDialogOptions{
+			Title: "Select notes folder",
+		})
+		if err != nil {
+			return WorkspaceState{}, err
+		}
+		if strings.TrimSpace(dir) == "" {
+			return WorkspaceState{}, errors.New("notes folder not selected")
+		}
+		cfg.NotesDir = dir
+		if err := saveConfig(cfg); err != nil {
+			return WorkspaceState{}, err
+		}
+	}
+
+	tree, err := buildFileTree(cfg.NotesDir)
+	if err != nil {
+		return WorkspaceState{}, err
+	}
+
+	return WorkspaceState{
+		NotesDir: cfg.NotesDir,
+		Tree:     tree,
+	}, nil
+}
+
+func (a *App) ChooseNotesDir() (WorkspaceState, error) {
+	dir, err := wailsruntime.OpenDirectoryDialog(a.ctx, wailsruntime.OpenDialogOptions{
+		Title: "Select notes folder",
+	})
+	if err != nil {
+		return WorkspaceState{}, err
+	}
+	if strings.TrimSpace(dir) == "" {
+		return WorkspaceState{}, errors.New("notes folder not selected")
+	}
+
+	cfg := AppConfig{NotesDir: dir}
+	if err := saveConfig(cfg); err != nil {
+		return WorkspaceState{}, err
+	}
+
+	tree, err := buildFileTree(cfg.NotesDir)
+	if err != nil {
+		return WorkspaceState{}, err
+	}
+
+	return WorkspaceState{
+		NotesDir: cfg.NotesDir,
+		Tree:     tree,
+	}, nil
+}
+
+func (a *App) RefreshWorkspace() (WorkspaceState, error) {
+	cfg, err := loadConfig()
+	if err != nil {
+		return WorkspaceState{}, err
+	}
+	if !isExistingDir(cfg.NotesDir) {
+		return WorkspaceState{}, errors.New("notes folder not configured")
+	}
+
+	tree, err := buildFileTree(cfg.NotesDir)
+	if err != nil {
+		return WorkspaceState{}, err
+	}
+	return WorkspaceState{
+		NotesDir: cfg.NotesDir,
+		Tree:     tree,
+	}, nil
+}
+
 func (a *App) SaveNote(path string, blocks []Block, password string, noteSensitive bool) error {
 	if strings.TrimSpace(path) == "" {
 		return errors.New("path is required")
 	}
+	path = resolveNotePath(path)
 	if len(blocks) == 0 {
 		blocks = []Block{{ID: newBlockID(), Markdown: "", Sensitive: false}}
 	}
@@ -88,6 +190,9 @@ func (a *App) SaveNote(path string, blocks []Block, password string, noteSensiti
 		out.WriteString("\n\n")
 	}
 
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
 	return os.WriteFile(path, []byte(out.String()), 0o644)
 }
 
@@ -95,6 +200,7 @@ func (a *App) LoadNote(path string, password string) (NoteDocument, error) {
 	if strings.TrimSpace(path) == "" {
 		return NoteDocument{}, errors.New("path is required")
 	}
+	path = resolveNotePath(path)
 
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -198,4 +304,119 @@ func parseAttrs(line string) map[string]string {
 		}
 	}
 	return attrs
+}
+
+func buildFileTree(root string) ([]FileNode, error) {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil, err
+	}
+
+	nodes := make([]FileNode, 0, len(entries))
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+		fullPath := filepath.Join(root, entry.Name())
+		if entry.IsDir() {
+			children, err := buildFileTree(fullPath)
+			if err != nil {
+				return nil, err
+			}
+			nodes = append(nodes, FileNode{
+				Name:     entry.Name(),
+				Path:     fullPath,
+				IsDir:    true,
+				Children: children,
+			})
+			continue
+		}
+		nodes = append(nodes, FileNode{
+			Name:  entry.Name(),
+			Path:  fullPath,
+			IsDir: false,
+		})
+	}
+
+	slices.SortFunc(nodes, func(a, b FileNode) int {
+		if a.IsDir != b.IsDir {
+			if a.IsDir {
+				return -1
+			}
+			return 1
+		}
+		return strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name))
+	})
+
+	return nodes, nil
+}
+
+func configFilePath() (string, error) {
+	if runtime.GOOS == "windows" {
+		base, err := os.UserConfigDir()
+		if err != nil {
+			return "", err
+		}
+		return filepath.Join(base, "go-md-notes", "config.json"), nil
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".go-md-notes", "config.json"), nil
+}
+
+func loadConfig() (AppConfig, error) {
+	configPath, err := configFilePath()
+	if err != nil {
+		return AppConfig{}, err
+	}
+	data, err := os.ReadFile(configPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return AppConfig{}, nil
+	}
+	if err != nil {
+		return AppConfig{}, err
+	}
+
+	var cfg AppConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return AppConfig{}, err
+	}
+	return cfg, nil
+}
+
+func saveConfig(cfg AppConfig) error {
+	configPath, err := configFilePath()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(configPath, data, 0o644)
+}
+
+func resolveNotePath(path string) string {
+	if filepath.IsAbs(path) {
+		return path
+	}
+	cfg, err := loadConfig()
+	if err != nil || cfg.NotesDir == "" {
+		return path
+	}
+	return filepath.Join(cfg.NotesDir, path)
+}
+
+func isExistingDir(path string) bool {
+	if strings.TrimSpace(path) == "" {
+		return false
+	}
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }
