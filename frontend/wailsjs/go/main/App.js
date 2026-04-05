@@ -10,6 +10,6 @@ export function LoadNote(arg1, arg2) {
   return window['go']['main']['App']['LoadNote'](arg1, arg2);
 }
 
-export function SaveNote(arg1, arg2, arg3) {
-  return window['go']['main']['App']['SaveNote'](arg1, arg2, arg3);
+export function SaveNote(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['SaveNote'](arg1, arg2, arg3, arg4);
 }

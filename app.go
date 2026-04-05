@@ -21,10 +21,16 @@ type Block struct {
 	Sensitive bool   `json:"sensitive"`
 }
 
+type NoteDocument struct {
+	Blocks        []Block `json:"blocks"`
+	NoteSensitive bool    `json:"noteSensitive"`
+}
+
 var attrRegex = regexp.MustCompile(`([a-zA-Z]+)="([^"]*)"`)
 
 const blockHeaderPrefix = "<!-- go-md-notes:block"
 const blockFooter = "<!-- /go-md-notes:block -->"
+const metaPrefix = "<!-- go-md-notes:meta"
 
 // NewApp creates a new App application struct
 func NewApp() *App {
@@ -42,7 +48,7 @@ func (a *App) Greet(name string) string {
 	return fmt.Sprintf("Hello %s, It's show time!", name)
 }
 
-func (a *App) SaveNote(path string, blocks []Block, password string) error {
+func (a *App) SaveNote(path string, blocks []Block, password string, noteSensitive bool) error {
 	if strings.TrimSpace(path) == "" {
 		return errors.New("path is required")
 	}
@@ -51,15 +57,18 @@ func (a *App) SaveNote(path string, blocks []Block, password string) error {
 	}
 
 	var out strings.Builder
+	out.WriteString(fmt.Sprintf(`%s note_sensitive="%t" -->`, metaPrefix, noteSensitive))
+	out.WriteString("\n\n")
 	for _, block := range blocks {
 		if block.ID == "" {
 			block.ID = newBlockID()
 		}
 
-		header := fmt.Sprintf(`%s id="%s" sensitive="%t" encrypted="%t"`, blockHeaderPrefix, block.ID, block.Sensitive, block.Sensitive)
+		blockSensitive := noteSensitive || block.Sensitive
+		header := fmt.Sprintf(`%s id="%s" sensitive="%t" encrypted="%t"`, blockHeaderPrefix, block.ID, block.Sensitive, blockSensitive)
 		body := block.Markdown
 
-		if block.Sensitive {
+		if blockSensitive {
 			if password == "" {
 				return fmt.Errorf("password required for sensitive block %s", block.ID)
 			}
@@ -82,25 +91,43 @@ func (a *App) SaveNote(path string, blocks []Block, password string) error {
 	return os.WriteFile(path, []byte(out.String()), 0o644)
 }
 
-func (a *App) LoadNote(path string, password string) ([]Block, error) {
+func (a *App) LoadNote(path string, password string) (NoteDocument, error) {
 	if strings.TrimSpace(path) == "" {
-		return nil, errors.New("path is required")
+		return NoteDocument{}, errors.New("path is required")
 	}
 
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, err
+		return NoteDocument{}, err
 	}
 
 	content := string(data)
 	if !strings.Contains(content, blockHeaderPrefix) {
-		return []Block{{ID: newBlockID(), Markdown: content, Sensitive: false}}, nil
+		lines := strings.Split(content, "\n")
+		blocks := make([]Block, 0, len(lines))
+		for _, line := range lines {
+			blocks = append(blocks, Block{
+				ID:        newBlockID(),
+				Markdown:  line,
+				Sensitive: false,
+			})
+		}
+		if len(blocks) == 0 {
+			blocks = append(blocks, Block{ID: newBlockID(), Markdown: "", Sensitive: false})
+		}
+		return NoteDocument{Blocks: blocks, NoteSensitive: false}, nil
 	}
 
 	lines := strings.Split(content, "\n")
 	result := make([]Block, 0)
+	noteSensitive := false
 	for i := 0; i < len(lines); i++ {
 		line := strings.TrimSpace(lines[i])
+		if strings.HasPrefix(line, metaPrefix) {
+			attrs := parseAttrs(line)
+			noteSensitive = attrs["note_sensitive"] == "true"
+			continue
+		}
 		if !strings.HasPrefix(line, blockHeaderPrefix) {
 			continue
 		}
@@ -126,12 +153,12 @@ func (a *App) LoadNote(path string, password string) ([]Block, error) {
 		body := strings.Join(bodyLines, "\n")
 		if attrs["encrypted"] == "true" {
 			if password == "" {
-				return nil, fmt.Errorf("password required for sensitive block %s", block.ID)
+				return NoteDocument{}, fmt.Errorf("password required for sensitive block %s", block.ID)
 			}
 			encryptedBody := strings.TrimSpace(body)
 			ciphertext, err := base64.StdEncoding.DecodeString(encryptedBody)
 			if err != nil {
-				return nil, fmt.Errorf("decode encrypted block %s: %w", block.ID, err)
+				return NoteDocument{}, fmt.Errorf("decode encrypted block %s: %w", block.ID, err)
 			}
 			plaintext, err := DecryptWithPassword(EncryptedBlock{
 				SaltB64:    attrs["salt"],
@@ -139,7 +166,7 @@ func (a *App) LoadNote(path string, password string) ([]Block, error) {
 				Ciphertext: ciphertext,
 			}, password)
 			if err != nil {
-				return nil, fmt.Errorf("decrypt block %s: %w", block.ID, err)
+				return NoteDocument{}, fmt.Errorf("decrypt block %s: %w", block.ID, err)
 			}
 			block.Markdown = string(plaintext)
 		} else {
@@ -150,10 +177,16 @@ func (a *App) LoadNote(path string, password string) ([]Block, error) {
 	}
 
 	if len(result) == 0 {
-		return []Block{{ID: newBlockID(), Markdown: content, Sensitive: false}}, nil
+		return NoteDocument{
+			Blocks:        []Block{{ID: newBlockID(), Markdown: content, Sensitive: false}},
+			NoteSensitive: false,
+		}, nil
 	}
 
-	return result, nil
+	return NoteDocument{
+		Blocks:        result,
+		NoteSensitive: noteSensitive,
+	}, nil
 }
 
 func parseAttrs(line string) map[string]string {

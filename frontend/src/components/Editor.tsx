@@ -5,8 +5,9 @@ type EditorProps = {
     activeBlockId: string | null;
     onSelectBlock: (id: string) => void;
     onUpdateBlock: (id: string, markdown: string) => void;
-    onToggleSensitive: (id: string) => void;
-    onAddBlock: () => void;
+    onInsertBelow: (id: string) => void;
+    onMoveSelection: (id: string, delta: number) => void;
+    onRemoveBlock: (id: string) => void;
 };
 
 export const Editor = ({
@@ -14,49 +15,53 @@ export const Editor = ({
     activeBlockId,
     onSelectBlock,
     onUpdateBlock,
-    onToggleSensitive,
-    onAddBlock,
+    onInsertBelow,
+    onMoveSelection,
+    onRemoveBlock,
 }: EditorProps) => {
     return (
-        <div className="editor-root">
+        <div className="editor-root line-editor">
             {blocks.map((block) => {
                 const active = block.id === activeBlockId;
                 return (
                     <section
                         key={block.id}
-                        className={`editor-block ${active ? "active" : ""}`}
+                        className={`line-row ${active ? "active" : ""}`}
                         onClick={() => onSelectBlock(block.id)}
                     >
-                        <header className="editor-block-header">
-                            <code>{block.id}</code>
-                            <label className="sensitive-toggle">
-                                <input
-                                    type="checkbox"
-                                    checked={block.sensitive}
-                                    onChange={() => onToggleSensitive(block.id)}
-                                    onClick={(e) => e.stopPropagation()}
-                                />
-                                sensitive
-                            </label>
-                        </header>
                         {active ? (
-                            <textarea
-                                className="editor-textarea"
+                            <input
+                                className="line-input"
                                 value={block.markdown}
                                 onChange={(e) => onUpdateBlock(block.id, e.target.value)}
+                                onKeyDown={(e) => {
+                                    if (e.key === "Enter") {
+                                        e.preventDefault();
+                                        onInsertBelow(block.id);
+                                    } else if (e.key === "ArrowUp") {
+                                        e.preventDefault();
+                                        onMoveSelection(block.id, -1);
+                                    } else if (e.key === "ArrowDown") {
+                                        e.preventDefault();
+                                        onMoveSelection(block.id, 1);
+                                    } else if (e.key === "Backspace" && block.markdown === "") {
+                                        e.preventDefault();
+                                        onRemoveBlock(block.id);
+                                    }
+                                }}
                                 onClick={(e) => e.stopPropagation()}
-                                placeholder="Write markdown..."
+                                placeholder="Write markdown for this line..."
+                                autoFocus
                             />
                         ) : (
                             <div
-                                className="editor-preview"
+                                className="line-preview"
                                 dangerouslySetInnerHTML={{__html: markdownToHtml(block.markdown)}}
                             />
                         )}
                     </section>
                 );
             })}
-            <button className="add-block-btn" onClick={onAddBlock}>+ Add Block</button>
         </div>
     );
 };

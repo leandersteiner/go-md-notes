@@ -4,6 +4,6 @@ import {main} from '../models';
 
 export function Greet(arg1:string):Promise<string>;
 
-export function LoadNote(arg1:string,arg2:string):Promise<Array<main.Block>>;
+export function LoadNote(arg1:string,arg2:string):Promise<main.NoteDocument>;
 
-export function SaveNote(arg1:string,arg2:Array<main.Block>,arg3:string):Promise<void>;
+export function SaveNote(arg1:string,arg2:Array<main.Block>,arg3:string,arg4:boolean):Promise<void>;

@@ -1,41 +1,27 @@
 import {useState} from 'react';
 import './App.css';
-import {Editor} from "./components/Editor";
 import {Block} from "./types/Block";
 import {LoadNote, SaveNote} from "../wailsjs/go/main/App";
+import CodeMirror from "@uiw/react-codemirror";
+import {markdown} from "@codemirror/lang-markdown";
+import {syntaxHighlighting, HighlightStyle} from "@codemirror/language";
+import {tags} from "@lezer/highlight";
+import {EditorView} from "@codemirror/view";
 
 function App() {
     const [notePath, setNotePath] = useState("notes.md");
     const [password, setPassword] = useState("");
+    const [noteSensitive, setNoteSensitive] = useState(false);
     const [status, setStatus] = useState("Ready");
-    const [blocks, setBlocks] = useState<Block[]>([{
-        id: newLocalBlockID(),
-        markdown: "# New note",
-        sensitive: false,
-    }]);
-    const [activeBlockId, setActiveBlockId] = useState<string | null>(blocks[0]?.id ?? null);
-
-    const onUpdateBlock = (id: string, markdown: string) => {
-        setBlocks((prev) => prev.map((b) => b.id === id ? {...b, markdown} : b));
-    };
-
-    const onToggleSensitive = (id: string) => {
-        setBlocks((prev) => prev.map((b) => b.id === id ? {...b, sensitive: !b.sensitive} : b));
-    };
-
-    const onAddBlock = () => {
-        const next: Block = {id: newLocalBlockID(), markdown: "", sensitive: false};
-        setBlocks((prev) => [...prev, next]);
-        setActiveBlockId(next.id);
-    };
+    const [editorText, setEditorText] = useState("# New note");
 
     const load = async () => {
         try {
-            const loaded = await LoadNote(notePath, password);
-            const normalized = loaded.length > 0 ? loaded : [{id: newLocalBlockID(), markdown: "", sensitive: false}];
-            setBlocks(normalized);
-            setActiveBlockId(normalized[0]?.id ?? null);
-            setStatus(`Loaded ${normalized.length} block(s)`);
+            const doc = await LoadNote(notePath, password);
+            const rebuilt = buildEditorLines(doc.blocks, doc.noteSensitive);
+            setEditorText(rebuilt.join("\n"));
+            setNoteSensitive(doc.noteSensitive);
+            setStatus(`Loaded`);
         } catch (e) {
             setStatus(`Load failed: ${String(e)}`);
         }
@@ -43,8 +29,10 @@ function App() {
 
     const save = async () => {
         try {
-            await SaveNote(notePath, blocks, password);
-            setStatus(`Saved ${blocks.length} block(s)`);
+            const lines = editorText.split("\n");
+            const prepared = parseSensitiveBlocksFromLines(lines, noteSensitive);
+            await SaveNote(notePath, prepared, password, noteSensitive);
+            setStatus(`Saved`);
         } catch (e) {
             setStatus(`Save failed: ${String(e)}`);
         }
@@ -68,20 +56,50 @@ function App() {
                 />
                 <button className="toolbar-btn" onClick={load}>Load</button>
                 <button className="toolbar-btn" onClick={save}>Save</button>
+                <button className="toolbar-btn" onClick={() => setNoteSensitive((v) => !v)}>
+                    {noteSensitive ? "Full Note: Sensitive" : "Full Note: Public"}
+                </button>
                 <span className="status">{status}</span>
             </header>
             <main className="editor-container">
-                <Editor
-                    blocks={blocks}
-                    activeBlockId={activeBlockId}
-                    onSelectBlock={setActiveBlockId}
-                    onUpdateBlock={onUpdateBlock}
-                    onToggleSensitive={onToggleSensitive}
-                    onAddBlock={onAddBlock}
+                <CodeMirror
+                    value={editorText}
+                    onChange={(value) => setEditorText(value)}
+                    extensions={[
+                        markdown(),
+                        syntaxHighlighting(headingHighlightStyle),
+                        EditorView.lineWrapping,
+                        EditorView.theme({
+                            "&": {
+                                minHeight: "70vh",
+                                fontSize: "16px",
+                            },
+                            ".cm-scroller": {
+                                overflow: "auto",
+                                fontFamily: "\"SFMono-Regular\", Consolas, \"Liberation Mono\", Menlo, monospace",
+                            },
+                            ".cm-content": {
+                                padding: "1rem",
+                                caretColor: "#e9f0f6",
+                            },
+                            ".cm-line": {
+                                color: "#d8e3ee",
+                            },
+                            "&.cm-focused": {
+                                outline: "none",
+                            },
+                        }, {dark: true}),
+                    ]}
+                    theme="dark"
+                    className="main-editor-cm"
+                    basicSetup={{
+                        foldGutter: false,
+                        dropCursor: false,
+                    }}
                 />
             </main>
             <div className="hint">
-                Active block is raw markdown; all other blocks are preview.
+                Single pane editor. Inline sensitive sections use markers: &lt;!-- sensitive:start --&gt; / &lt;!-- sensitive:end --&gt;.
             </div>
         </div>
     );
@@ -89,6 +107,76 @@ function App() {
 
 const newLocalBlockID = (): string => {
     return `block-${Math.random().toString(16).slice(2, 10)}`;
+};
+
+const MARKER_START = "<!-- sensitive:start -->";
+const MARKER_END = "<!-- sensitive:end -->";
+
+const headingHighlightStyle = HighlightStyle.define([
+    {tag: tags.heading1, fontSize: "2em", fontWeight: "700", color: "#f5fbff"},
+    {tag: tags.heading2, fontSize: "1.7em", fontWeight: "700", color: "#eef8ff"},
+    {tag: tags.heading3, fontSize: "1.45em", fontWeight: "700", color: "#e7f4ff"},
+    {tag: tags.heading4, fontSize: "1.25em", fontWeight: "700", color: "#ddecfb"},
+    {tag: tags.heading5, fontSize: "1.1em", fontWeight: "700", color: "#d2e3f3"},
+    {tag: tags.heading6, fontSize: "1em", fontWeight: "700", color: "#c6d8e8"},
+]);
+
+const parseSensitiveBlocksFromLines = (lines: string[], noteSensitive: boolean): Block[] => {
+    const withIDs = lines.map((line) => ({
+        id: newLocalBlockID(),
+        markdown: line,
+        sensitive: false,
+    }));
+
+    if (noteSensitive) {
+        return withIDs;
+    }
+
+    let inSensitiveRegion = false;
+    const result: Block[] = [];
+
+    for (const line of withIDs) {
+        const trimmed = line.markdown.trim();
+        if (trimmed === MARKER_START) {
+            inSensitiveRegion = true;
+            continue;
+        }
+        if (trimmed === MARKER_END) {
+            inSensitiveRegion = false;
+            continue;
+        }
+        result.push({
+            ...line,
+            sensitive: inSensitiveRegion,
+        });
+    }
+
+    return result;
+};
+
+const buildEditorLines = (stored: Block[], noteSensitive: boolean): string[] => {
+    if (noteSensitive) {
+        return stored.map((line) => line.markdown);
+    }
+
+    const result: string[] = [];
+    let inSensitiveRegion = false;
+    for (const line of stored) {
+        if (line.sensitive && !inSensitiveRegion) {
+            result.push(MARKER_START);
+            inSensitiveRegion = true;
+        }
+        if (!line.sensitive && inSensitiveRegion) {
+            result.push(MARKER_END);
+            inSensitiveRegion = false;
+        }
+        result.push(line.markdown);
+    }
+    if (inSensitiveRegion) {
+        result.push(MARKER_END);
+    }
+
+    return result;
 };
 
 export default App;
