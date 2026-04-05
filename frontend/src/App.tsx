@@ -1,6 +1,5 @@
 import {useEffect, useRef, useState} from 'react';
 import './App.css';
-import {Block} from "./types/Block";
 import {
     ChooseNotesDir,
     CreateFile,
@@ -19,25 +18,26 @@ import {
 } from "../wailsjs/go/main/App";
 import CodeMirror from "@uiw/react-codemirror";
 import {markdown} from "@codemirror/lang-markdown";
-import {RangeSetBuilder} from "@codemirror/state";
-import {Decoration, EditorView, highlightActiveLine, highlightActiveLineGutter, keymap, ViewPlugin} from "@codemirror/view";
+import {EditorView, highlightActiveLine, highlightActiveLineGutter, keymap} from "@codemirror/view";
 import {languages} from "@codemirror/language-data";
 import type {ViewUpdate} from "@codemirror/view";
-
-type FileNode = {
-    name: string;
-    path: string;
-    isDir: boolean;
-    children?: FileNode[];
-}
-
-type WorkspaceState = {
-    notesDir: string;
-    tree: FileNode[];
-    dirtyPaths?: string[];
-    securityMode: string;
-    securityConfigured: boolean;
-}
+import {TreeNodes} from "./components/TreeNodes";
+import {FileNode, WorkspaceState} from "./types/Workspace";
+import {toDisplayPath} from "./utils/path";
+import {
+    buildEditorLines,
+    findSensitiveRegionAroundSelection,
+    MARKER_END,
+    MARKER_START,
+    parseSensitiveBlocksFromLines,
+    removeSensitiveRegionMarkers
+} from "./editor/sensitive";
+import {
+    atxHeadingLineDecorations,
+    editorThemeExtension,
+    fencedCodeLineDecorations,
+    inlineCodeDecorations
+} from "./editor/decorations";
 
 type ContextMenuState = {
     visible: boolean;
@@ -399,6 +399,11 @@ function App() {
             if (event.shiftKey && key === "p") {
                 event.preventDefault();
                 setNoteSensitive((v) => !v);
+                return;
+            }
+            if (event.shiftKey && key === "e") {
+                event.preventDefault();
+                toggleSensitive();
             }
         };
 
@@ -535,101 +540,9 @@ function App() {
                                     {key: "Mod-Shift-o", run: () => { void chooseFolder(); return true; }},
                                     {key: "Mod-Shift-r", run: () => { void reloadTree(); return true; }},
                                     {key: "Mod-Shift-p", run: () => { setNoteSensitive((v) => !v); return true; }},
+                                    {key: "Mod-Shift-e", run: () => { toggleSensitive(); return true; }},
                                 ]),
-                                EditorView.theme({
-                                    "&": {
-                                        height: "100%",
-                                        fontSize: "16px",
-                                        backgroundColor: "#0f1720",
-                                        color: "#e6eef7",
-                                    },
-                                    ".cm-scroller": {
-                                        overflow: "auto",
-                                        fontFamily: "\"SFMono-Regular\", Consolas, \"Liberation Mono\", Menlo, monospace",
-                                    },
-                                    ".cm-content": {
-                                        padding: "1rem",
-                                        caretColor: "#f2f7ff",
-                                    },
-                                    ".cm-line": {
-                                        color: "#e2ebf5",
-                                    },
-                                    ".cm-line.cm-atx-h1": {
-                                        fontSize: "2em",
-                                        fontWeight: "700",
-                                        color: "#f5fbff",
-                                    },
-                                    ".cm-line.cm-atx-h2": {
-                                        fontSize: "1.7em",
-                                        fontWeight: "700",
-                                        color: "#eef8ff",
-                                    },
-                                    ".cm-line.cm-atx-h3": {
-                                        fontSize: "1.45em",
-                                        fontWeight: "700",
-                                        color: "#e7f4ff",
-                                    },
-                                    ".cm-line.cm-atx-h4": {
-                                        fontSize: "1.25em",
-                                        fontWeight: "700",
-                                        color: "#ddecfb",
-                                    },
-                                    ".cm-line.cm-atx-h5": {
-                                        fontSize: "1.1em",
-                                        fontWeight: "700",
-                                        color: "#d2e3f3",
-                                    },
-                                    ".cm-line.cm-atx-h6": {
-                                        fontSize: "1em",
-                                        fontWeight: "700",
-                                        color: "#c6d8e8",
-                                    },
-                                    ".cm-line.cm-codeblock-start, .cm-line.cm-codeblock-mid, .cm-line.cm-codeblock-end": {
-                                        backgroundColor: "#111c27",
-                                        borderLeft: "1px solid #243848",
-                                        borderRight: "1px solid #243848",
-                                    },
-                                    ".cm-line.cm-codeblock-start": {
-                                        borderTop: "1px solid #243848",
-                                        borderTopLeftRadius: "6px",
-                                        borderTopRightRadius: "6px",
-                                        marginTop: "0.2rem",
-                                    },
-                                    ".cm-line.cm-codeblock-end": {
-                                        borderBottom: "1px solid #243848",
-                                        borderBottomLeftRadius: "6px",
-                                        borderBottomRightRadius: "6px",
-                                        marginBottom: "0.2rem",
-                                    },
-                                    ".cm-inline-code-pill": {
-                                        backgroundColor: "#182532",
-                                        border: "1px solid #2a4255",
-                                        borderRadius: "4px",
-                                        padding: "0 0.2em",
-                                        color: "#d8e8f7",
-                                    },
-                                    ".cm-cursor, .cm-dropCursor": {
-                                        borderLeftColor: "#f3f8ff",
-                                        borderLeftWidth: "2px",
-                                    },
-                                    ".cm-selectionBackground, ::selection": {
-                                        backgroundColor: "#335a7a !important",
-                                    },
-                                    ".cm-activeLine": {
-                                        backgroundColor: "#1a2a39",
-                                    },
-                                    ".cm-activeLineGutter": {
-                                        backgroundColor: "#1a2a39",
-                                    },
-                                    ".cm-gutters": {
-                                        backgroundColor: "#0f1720",
-                                        color: "#8da6bf",
-                                        borderRight: "1px solid #2c4155",
-                                    },
-                                    "&.cm-focused": {
-                                        outline: "none",
-                                    },
-                                }, {dark: true}),
+                                editorThemeExtension,
                                 ]}
                                 theme="dark"
                                 className="main-editor-cm"
@@ -902,399 +815,5 @@ function App() {
         setGitDirtyPaths(dirtyMap);
     }
 }
-
-const newLocalBlockID = (): string => {
-    return `block-${Math.random().toString(16).slice(2, 10)}`;
-};
-
-const MARKER_START = "<!-- sensitive:start -->";
-const MARKER_END = "<!-- sensitive:end -->";
-
-const atxHeadingLineDecorations = ViewPlugin.fromClass(class {
-    decorations;
-
-    constructor(view: EditorView) {
-        this.decorations = this.buildDecorations(view);
-    }
-
-    update(update: ViewUpdate) {
-        if (update.docChanged || update.viewportChanged) {
-            this.decorations = this.buildDecorations(update.view);
-        }
-    }
-
-    buildDecorations(view: EditorView) {
-        const builder = new RangeSetBuilder<Decoration>();
-
-        for (const {from, to} of view.visibleRanges) {
-            let line = view.state.doc.lineAt(from);
-            while (line.from <= to) {
-                const match = line.text.match(/^(#{1,6})\s+/);
-                if (match) {
-                    const level = Math.min(match[1].length, 6);
-                    builder.add(line.from, line.from, Decoration.line({
-                        class: `cm-atx-h${level}`,
-                    }));
-                }
-                if (line.to >= to) {
-                    break;
-                }
-                line = view.state.doc.line(line.number + 1);
-            }
-        }
-
-        return builder.finish();
-    }
-}, {
-    decorations: (value) => value.decorations,
-});
-
-const fencedCodeLineDecorations = ViewPlugin.fromClass(class {
-    decorations;
-
-    constructor(view: EditorView) {
-        this.decorations = this.buildDecorations(view);
-    }
-
-    update(update: ViewUpdate) {
-        if (update.docChanged || update.viewportChanged) {
-            this.decorations = this.buildDecorations(update.view);
-        }
-    }
-
-    buildDecorations(view: EditorView) {
-        const builder = new RangeSetBuilder<Decoration>();
-        const lineCount = view.state.doc.lines;
-
-        let inFence = false;
-        let fenceChar = "";
-        let fenceLen = 0;
-
-        for (let lineNo = 1; lineNo <= lineCount; lineNo++) {
-            const line = view.state.doc.line(lineNo);
-            if (!inFence) {
-                const open = parseFenceOpen(line.text);
-                if (!open) {
-                    continue;
-                }
-                inFence = true;
-                fenceChar = open.char;
-                fenceLen = open.length;
-                builder.add(line.from, line.from, Decoration.line({class: "cm-codeblock-start"}));
-                continue;
-            }
-
-            if (isFenceClose(line.text, fenceChar, fenceLen)) {
-                builder.add(line.from, line.from, Decoration.line({class: "cm-codeblock-end"}));
-                inFence = false;
-                fenceChar = "";
-                fenceLen = 0;
-                continue;
-            }
-
-            builder.add(line.from, line.from, Decoration.line({class: "cm-codeblock-mid"}));
-        }
-
-        return builder.finish();
-    }
-}, {
-    decorations: (value) => value.decorations,
-});
-
-const inlineCodeDecorations = ViewPlugin.fromClass(class {
-    decorations;
-
-    constructor(view: EditorView) {
-        this.decorations = this.buildDecorations(view);
-    }
-
-    update(update: ViewUpdate) {
-        if (update.docChanged || update.viewportChanged) {
-            this.decorations = this.buildDecorations(update.view);
-        }
-    }
-
-    buildDecorations(view: EditorView) {
-        const builder = new RangeSetBuilder<Decoration>();
-        const lineCount = view.state.doc.lines;
-
-        let inFence = false;
-        let fenceChar = "";
-        let fenceLen = 0;
-
-        for (let lineNo = 1; lineNo <= lineCount; lineNo++) {
-            const line = view.state.doc.line(lineNo);
-
-            if (!inFence) {
-                const open = parseFenceOpen(line.text);
-                if (open) {
-                    inFence = true;
-                    fenceChar = open.char;
-                    fenceLen = open.length;
-                    continue;
-                }
-            } else {
-                if (isFenceClose(line.text, fenceChar, fenceLen)) {
-                    inFence = false;
-                    fenceChar = "";
-                    fenceLen = 0;
-                }
-                continue;
-            }
-
-            const re = /`[^`\n]+`/g;
-            let match: RegExpExecArray | null;
-            while ((match = re.exec(line.text)) !== null) {
-                const start = line.from + match.index;
-                const end = start + match[0].length;
-                builder.add(start, end, Decoration.mark({class: "cm-inline-code-pill"}));
-            }
-        }
-
-        return builder.finish();
-    }
-}, {
-    decorations: (value) => value.decorations,
-});
-
-const parseFenceOpen = (line: string): {char: string; length: number} | null => {
-    const match = line.match(/^[ \t]{0,3}(`{3,}|~{3,})/);
-    if (!match) return null;
-    return {
-        char: match[1][0],
-        length: match[1].length,
-    };
-};
-
-const isFenceClose = (line: string, marker: string, minLen: number): boolean => {
-    const escaped = marker === "`" ? "\\`" : "~";
-    const re = new RegExp(`^[ \\t]{0,3}${escaped}{${minLen},}[ \\t]*$`);
-    return re.test(line);
-};
-
-const parseSensitiveBlocksFromLines = (lines: string[], noteSensitive: boolean): Block[] => {
-    const withIDs = lines.map((line) => ({
-        id: newLocalBlockID(),
-        markdown: line,
-        sensitive: false,
-    }));
-
-    if (noteSensitive) {
-        return withIDs;
-    }
-
-    let inSensitiveRegion = false;
-    const result: Block[] = [];
-
-    for (const line of withIDs) {
-        const trimmed = line.markdown.trim();
-        if (trimmed === MARKER_START) {
-            inSensitiveRegion = true;
-            continue;
-        }
-        if (trimmed === MARKER_END) {
-            inSensitiveRegion = false;
-            continue;
-        }
-        result.push({
-            ...line,
-            sensitive: inSensitiveRegion,
-        });
-    }
-
-    return result;
-};
-
-const buildEditorLines = (stored: Block[], noteSensitive: boolean): string[] => {
-    if (noteSensitive) {
-        return stored.map((line) => line.markdown);
-    }
-
-    const result: string[] = [];
-    let inSensitiveRegion = false;
-    for (const line of stored) {
-        if (line.sensitive && !inSensitiveRegion) {
-            result.push(MARKER_START);
-            inSensitiveRegion = true;
-        }
-        if (!line.sensitive && inSensitiveRegion) {
-            result.push(MARKER_END);
-            inSensitiveRegion = false;
-        }
-        result.push(line.markdown);
-    }
-    if (inSensitiveRegion) {
-        result.push(MARKER_END);
-    }
-
-    return result;
-};
-
-const findSensitiveRegionAroundSelection = (
-    text: string,
-    from: number,
-    to: number,
-): { startLine: number; endLine: number } | null => {
-    const lines = text.split("\n");
-    const lineStarts: number[] = [];
-    let offset = 0;
-    for (const line of lines) {
-        lineStarts.push(offset);
-        offset += line.length + 1;
-    }
-
-    const posToLine = (pos: number) => {
-        let idx = 0;
-        for (let i = 0; i < lineStarts.length; i++) {
-            if (lineStarts[i] <= pos) idx = i;
-            else break;
-        }
-        return idx;
-    };
-
-    const startLine = posToLine(from);
-    const endLine = posToLine(Math.max(from, to - 1));
-
-    let openStart = -1;
-    for (let i = 0; i < lines.length; i++) {
-        const trimmed = lines[i].trim();
-        if (trimmed === MARKER_START) {
-            openStart = i;
-            continue;
-        }
-        if (trimmed === MARKER_END && openStart >= 0) {
-            const contentStart = openStart + 1;
-            const contentEnd = i - 1;
-            if (
-                (
-                    (contentStart <= contentEnd &&
-                        startLine >= contentStart &&
-                        endLine <= contentEnd) ||
-                    (startLine <= openStart && endLine >= i)
-                )
-            ) {
-                return {startLine: openStart, endLine: i};
-            }
-            openStart = -1;
-        }
-    }
-
-    return null;
-};
-
-const removeSensitiveRegionMarkers = (text: string, markerStartLine: number, markerEndLine: number): string => {
-    const lines = text.split("\n");
-    const next = lines.filter((_, index) => index !== markerStartLine && index !== markerEndLine);
-    return next.join("\n");
-};
-
-const TreeNodes = ({
-                       nodes,
-                       depth,
-                       selectedFile,
-                       hasUnsavedChanges,
-                       gitDirtyPaths,
-                       expandedDirs,
-                       onToggleDir,
-                       onContextMenu,
-                       onSelectFile,
-                   }: {
-    nodes: FileNode[];
-    depth: number;
-    selectedFile: string;
-    hasUnsavedChanges: boolean;
-    gitDirtyPaths: Record<string, boolean>;
-    expandedDirs: Record<string, boolean>;
-    onToggleDir: (dirPath: string) => void;
-    onContextMenu: (event: React.MouseEvent<HTMLDivElement>, path: string, isDir: boolean) => void;
-    onSelectFile: (file: string) => void;
-}) => {
-    return (
-        <>
-            {nodes.map((node) => (
-                <div key={node.path}>
-                    <div
-                        className={`tree-node ${node.isDir ? "dir" : "file"} ${selectedFile === node.path ? "selected" : ""}`}
-                        style={{paddingLeft: `${depth * 14 + 8}px`}}
-                        onClick={() => {
-                            if (node.isDir) {
-                                onToggleDir(node.path);
-                            } else {
-                                onSelectFile(node.path);
-                            }
-                        }}
-                        onContextMenu={(event) => {
-                            event.preventDefault();
-                            event.stopPropagation();
-                            onContextMenu(event, node.path, node.isDir);
-                        }}
-                    >
-                        <span className="tree-icon">
-                            {node.isDir ? (
-                                expandedDirs[node.path] ? <ChevronDownIcon/> : <ChevronRightIcon/>
-                            ) : (
-                                isMarkdownOrTextFile(node.name) ? <NoteFileIcon/> : <span className="tree-icon-spacer"/>
-                            )}
-                        </span>
-                        <span className="tree-label">{node.name}</span>
-                        {!node.isDir && selectedFile === node.path && hasUnsavedChanges ? (
-                            <span className="tree-badge unsaved">unsaved</span>
-                        ) : null}
-                        {!node.isDir && gitDirtyPaths[node.path] ? (
-                            <span className="tree-badge git">uncommitted</span>
-                        ) : null}
-                    </div>
-                    {node.isDir && expandedDirs[node.path] && node.children && node.children.length > 0 ? (
-                        <TreeNodes
-                            nodes={node.children}
-                            depth={depth + 1}
-                            selectedFile={selectedFile}
-                            hasUnsavedChanges={hasUnsavedChanges}
-                            gitDirtyPaths={gitDirtyPaths}
-                            expandedDirs={expandedDirs}
-                            onToggleDir={onToggleDir}
-                            onContextMenu={onContextMenu}
-                            onSelectFile={onSelectFile}
-                        />
-                    ) : null}
-                </div>
-            ))}
-        </>
-    );
-};
-
-const toDisplayPath = (absolutePath: string, root: string): string => {
-    if (!root) return absolutePath;
-    const normalizedRoot = root.endsWith("/") ? root : `${root}/`;
-    if (absolutePath.startsWith(normalizedRoot)) {
-        return absolutePath.slice(normalizedRoot.length);
-    }
-    return absolutePath;
-};
-
-const ChevronRightIcon = () => (
-    <svg width="12" height="12" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-        <path d="M7 4L13 10L7 16" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/>
-    </svg>
-);
-
-const ChevronDownIcon = () => (
-    <svg width="12" height="12" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-        <path d="M4 7L10 13L16 7" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/>
-    </svg>
-);
-
-const NoteFileIcon = () => (
-    <svg width="20" height="17" viewBox="0 0 24 20" fill="none" aria-hidden="true">
-        <path d="M5 2H14L19 7V18H5V2Z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round"/>
-        <path d="M14 2V7H19" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round"/>
-        <path d="M8 11H16M8 14H16" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-    </svg>
-);
-
-const isMarkdownOrTextFile = (name: string): boolean => {
-    const lower = name.toLowerCase();
-    return lower.endsWith(".md") || lower.endsWith(".markdown") || lower.endsWith(".mdx") || lower.endsWith(".txt");
-};
 
 export default App;
