@@ -71,7 +71,7 @@ function App() {
                         EditorView.lineWrapping,
                         EditorView.theme({
                             "&": {
-                                minHeight: "70vh",
+                                height: "100%",
                                 fontSize: "16px",
                             },
                             ".cm-scroller": {
