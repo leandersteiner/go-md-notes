@@ -87,6 +87,7 @@ export namespace main {
 	export class WorkspaceState {
 	    notesDir: string;
 	    tree: FileNode[];
+	    dirtyPaths: string[];
 	
 	    static createFrom(source: any = {}) {
 	        return new WorkspaceState(source);
@@ -96,6 +97,7 @@ export namespace main {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.notesDir = source["notesDir"];
 	        this.tree = this.convertValues(source["tree"], FileNode);
+	        this.dirtyPaths = source["dirtyPaths"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

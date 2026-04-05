@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -44,8 +45,9 @@ type NoteDocument struct {
 }
 
 type WorkspaceState struct {
-	NotesDir string     `json:"notesDir"`
-	Tree     []FileNode `json:"tree"`
+	NotesDir   string     `json:"notesDir"`
+	Tree       []FileNode `json:"tree"`
+	DirtyPaths []string   `json:"dirtyPaths"`
 }
 
 var attrRegex = regexp.MustCompile(`([a-zA-Z]+)="([^"]*)"`)
@@ -96,10 +98,15 @@ func (a *App) InitWorkspace() (WorkspaceState, error) {
 	if err != nil {
 		return WorkspaceState{}, err
 	}
+	dirtyPaths, err := gitDirtyPaths(cfg.NotesDir)
+	if err != nil {
+		return WorkspaceState{}, err
+	}
 
 	return WorkspaceState{
-		NotesDir: cfg.NotesDir,
-		Tree:     tree,
+		NotesDir:   cfg.NotesDir,
+		Tree:       tree,
+		DirtyPaths: dirtyPaths,
 	}, nil
 }
 
@@ -123,10 +130,15 @@ func (a *App) ChooseNotesDir() (WorkspaceState, error) {
 	if err != nil {
 		return WorkspaceState{}, err
 	}
+	dirtyPaths, err := gitDirtyPaths(cfg.NotesDir)
+	if err != nil {
+		return WorkspaceState{}, err
+	}
 
 	return WorkspaceState{
-		NotesDir: cfg.NotesDir,
-		Tree:     tree,
+		NotesDir:   cfg.NotesDir,
+		Tree:       tree,
+		DirtyPaths: dirtyPaths,
 	}, nil
 }
 
@@ -143,9 +155,14 @@ func (a *App) RefreshWorkspace() (WorkspaceState, error) {
 	if err != nil {
 		return WorkspaceState{}, err
 	}
+	dirtyPaths, err := gitDirtyPaths(cfg.NotesDir)
+	if err != nil {
+		return WorkspaceState{}, err
+	}
 	return WorkspaceState{
-		NotesDir: cfg.NotesDir,
-		Tree:     tree,
+		NotesDir:   cfg.NotesDir,
+		Tree:       tree,
+		DirtyPaths: dirtyPaths,
 	}, nil
 }
 
@@ -417,4 +434,46 @@ func isExistingDir(path string) bool {
 	}
 	info, err := os.Stat(path)
 	return err == nil && info.IsDir()
+}
+
+func gitDirtyPaths(root string) ([]string, error) {
+	cmdCheck := exec.Command("git", "-C", root, "rev-parse", "--is-inside-work-tree")
+	if err := cmdCheck.Run(); err != nil {
+		return []string{}, nil
+	}
+
+	cmd := exec.Command("git", "-C", root, "status", "--porcelain", "-z")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+	if len(out) == 0 {
+		return []string{}, nil
+	}
+
+	dirtySet := map[string]struct{}{}
+	entries := strings.Split(string(out), "\x00")
+	for i := 0; i < len(entries); i++ {
+		entry := entries[i]
+		if entry == "" || len(entry) < 4 {
+			continue
+		}
+		status := entry[:2]
+		pathPart := entry[3:]
+		if status[0] == 'R' || status[0] == 'C' || status[1] == 'R' || status[1] == 'C' {
+			if i+1 < len(entries) && entries[i+1] != "" {
+				pathPart = entries[i+1]
+				i++
+			}
+		}
+		abs := filepath.Clean(filepath.Join(root, filepath.FromSlash(pathPart)))
+		dirtySet[abs] = struct{}{}
+	}
+
+	paths := make([]string, 0, len(dirtySet))
+	for p := range dirtySet {
+		paths = append(paths, p)
+	}
+	slices.Sort(paths)
+	return paths, nil
 }

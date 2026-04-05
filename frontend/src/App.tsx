@@ -15,6 +15,12 @@ type FileNode = {
     children?: FileNode[];
 }
 
+type WorkspaceState = {
+    notesDir: string;
+    tree: FileNode[];
+    dirtyPaths?: string[];
+}
+
 function App() {
     const [notesDir, setNotesDir] = useState("");
     const [tree, setTree] = useState<FileNode[]>([]);
@@ -23,15 +29,20 @@ function App() {
     const [noteSensitive, setNoteSensitive] = useState(false);
     const [status, setStatus] = useState("Ready");
     const [editorText, setEditorText] = useState("# New note");
+    const [loadedText, setLoadedText] = useState("# New note");
+    const [loadedNoteSensitive, setLoadedNoteSensitive] = useState(false);
+    const [gitDirtyPaths, setGitDirtyPaths] = useState<Record<string, boolean>>({});
     const [loadingFile, setLoadingFile] = useState(false);
     const [expandedDirs, setExpandedDirs] = useState<Record<string, boolean>>({});
+    const hasUnsavedChanges = !!activeFilePath && (
+        editorText !== loadedText || noteSensitive !== loadedNoteSensitive
+    );
 
     useEffect(() => {
         const bootstrap = async () => {
             try {
                 const workspace = await InitWorkspace();
-                setNotesDir(workspace.notesDir);
-                setTree(workspace.tree ?? []);
+                applyWorkspace(workspace);
                 setStatus("Workspace ready");
             } catch (e) {
                 setStatus(`Workspace setup failed: ${String(e)}`);
@@ -43,8 +54,7 @@ function App() {
     const reloadTree = async () => {
         try {
             const workspace = await RefreshWorkspace();
-            setNotesDir(workspace.notesDir);
-            setTree(workspace.tree ?? []);
+            applyWorkspace(workspace);
             setStatus("Tree refreshed");
         } catch (e) {
             setStatus(`Refresh failed: ${String(e)}`);
@@ -54,11 +64,12 @@ function App() {
     const chooseFolder = async () => {
         try {
             const workspace = await ChooseNotesDir();
-            setNotesDir(workspace.notesDir);
-            setTree(workspace.tree ?? []);
+            applyWorkspace(workspace);
             setExpandedDirs({});
             setActiveFilePath("");
             setEditorText("# New note");
+            setLoadedText("# New note");
+            setLoadedNoteSensitive(false);
             setStatus("Notes folder updated");
         } catch (e) {
             setStatus(`Select folder failed: ${String(e)}`);
@@ -70,8 +81,11 @@ function App() {
             setLoadingFile(true);
             const doc = await LoadNote(absolutePath, password);
             const rebuilt = buildEditorLines(doc.blocks, doc.noteSensitive);
-            setEditorText(rebuilt.join("\n"));
+            const rebuiltText = rebuilt.join("\n");
+            setEditorText(rebuiltText);
             setNoteSensitive(doc.noteSensitive);
+            setLoadedText(rebuiltText);
+            setLoadedNoteSensitive(doc.noteSensitive);
             setActiveFilePath(absolutePath);
             setStatus(`Loaded ${toDisplayPath(absolutePath, notesDir)}`);
         } catch (e) {
@@ -90,6 +104,8 @@ function App() {
             const lines = editorText.split("\n");
             const prepared = parseSensitiveBlocksFromLines(lines, noteSensitive);
             await SaveNote(activeFilePath, prepared, password, noteSensitive);
+            setLoadedText(editorText);
+            setLoadedNoteSensitive(noteSensitive);
             setStatus(`Saved ${toDisplayPath(activeFilePath, notesDir)}`);
             await reloadTree();
         } catch (e) {
@@ -157,6 +173,8 @@ function App() {
                                 nodes={tree}
                                 depth={0}
                                 selectedFile={activeFilePath}
+                                hasUnsavedChanges={hasUnsavedChanges}
+                                gitDirtyPaths={gitDirtyPaths}
                                 expandedDirs={expandedDirs}
                                 onToggleDir={(dirPath) =>
                                     setExpandedDirs((prev) => ({...prev, [dirPath]: !prev[dirPath]}))
@@ -169,6 +187,10 @@ function App() {
                 <section className="editor-pane">
                     <div className="editor-path">
                         {activeFilePath ? toDisplayPath(activeFilePath, notesDir) : "Select a file to edit"}
+                        {hasUnsavedChanges ? <span className="path-badge unsaved">Unsaved</span> : null}
+                        {activeFilePath && gitDirtyPaths[activeFilePath] ? (
+                            <span className="path-badge git">Uncommitted</span>
+                        ) : null}
                     </div>
                     <CodeMirror
                         value={editorText}
@@ -220,6 +242,16 @@ function App() {
             </div>
         </div>
     );
+
+    function applyWorkspace(workspace: WorkspaceState) {
+        setNotesDir(workspace.notesDir);
+        setTree(workspace.tree ?? []);
+        const dirtyMap: Record<string, boolean> = {};
+        for (const p of workspace.dirtyPaths ?? []) {
+            dirtyMap[p] = true;
+        }
+        setGitDirtyPaths(dirtyMap);
+    }
 }
 
 const newLocalBlockID = (): string => {
@@ -300,6 +332,8 @@ const TreeNodes = ({
                        nodes,
                        depth,
                        selectedFile,
+                       hasUnsavedChanges,
+                       gitDirtyPaths,
                        expandedDirs,
                        onToggleDir,
                        onSelectFile,
@@ -307,6 +341,8 @@ const TreeNodes = ({
     nodes: FileNode[];
     depth: number;
     selectedFile: string;
+    hasUnsavedChanges: boolean;
+    gitDirtyPaths: Record<string, boolean>;
     expandedDirs: Record<string, boolean>;
     onToggleDir: (dirPath: string) => void;
     onSelectFile: (file: string) => void;
@@ -327,12 +363,20 @@ const TreeNodes = ({
                         }}
                     >
                         {node.isDir ? (expandedDirs[node.path] ? "[-]" : "[+]") : "[F]"} {node.name}
+                        {!node.isDir && selectedFile === node.path && hasUnsavedChanges ? (
+                            <span className="tree-badge unsaved">unsaved</span>
+                        ) : null}
+                        {!node.isDir && gitDirtyPaths[node.path] ? (
+                            <span className="tree-badge git">uncommitted</span>
+                        ) : null}
                     </div>
                     {node.isDir && expandedDirs[node.path] && node.children && node.children.length > 0 ? (
                         <TreeNodes
                             nodes={node.children}
                             depth={depth + 1}
                             selectedFile={selectedFile}
+                            hasUnsavedChanges={hasUnsavedChanges}
+                            gitDirtyPaths={gitDirtyPaths}
                             expandedDirs={expandedDirs}
                             onToggleDir={onToggleDir}
                             onSelectFile={onSelectFile}

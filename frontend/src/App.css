@@ -107,6 +107,28 @@
     color: #a9bfd4;
 }
 
+.tree-badge {
+    margin-left: 0.45rem;
+    font-size: 0.72rem;
+    border: 1px solid #334a61;
+    border-radius: 999px;
+    padding: 0.02rem 0.4rem;
+    color: #b4c9dc;
+    background: #102234;
+}
+
+.tree-badge.unsaved {
+    border-color: #7a5a2f;
+    color: #ffd8a2;
+    background: #3a2a17;
+}
+
+.tree-badge.git {
+    border-color: #335e4b;
+    color: #a9f4c8;
+    background: #17382b;
+}
+
 .editor-pane {
     flex: 1 1 auto;
     min-width: 0;
@@ -129,6 +151,31 @@
     border: 1px solid #263646;
     border-radius: 6px;
     background: #0b1823;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+}
+
+.path-badge {
+    font-size: 0.72rem;
+    border: 1px solid #334a61;
+    border-radius: 999px;
+    padding: 0.02rem 0.4rem;
+    color: #b4c9dc;
+    background: #102234;
+}
+
+.path-badge.unsaved {
+    border-color: #7a5a2f;
+    color: #ffd8a2;
+    background: #3a2a17;
+}
+
+.path-badge.git {
+    border-color: #335e4b;
+    color: #a9f4c8;
+    background: #17382b;
 }
 
 .main-editor-cm {
