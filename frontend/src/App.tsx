@@ -338,7 +338,7 @@ function App() {
                 />
                 <button className="toolbar-btn" onClick={chooseFolder}>Choose Folder</button>
                 <button className="toolbar-btn" onClick={reloadTree}>Refresh Tree</button>
-                <button className="toolbar-btn" onClick={save}>Save</button>
+                <button className="toolbar-btn" onClick={save} disabled={!activeFilePath}>Save</button>
                 <button className="toolbar-btn" onClick={() => setNoteSensitive((v) => !v)}>
                     {noteSensitive ? "Full Note: Sensitive" : "Full Note: Public"}
                 </button>
@@ -349,6 +349,11 @@ function App() {
                     <div className="sidebar-title">{notesDir || "No notes folder selected"}</div>
                     <div
                         className="file-tree"
+                        onMouseDownCapture={(event) => {
+                            if (event.button === 2) {
+                                event.preventDefault();
+                            }
+                        }}
                         onContextMenu={(event) => {
                             event.preventDefault();
                             if (!notesDir) return;
@@ -396,67 +401,97 @@ function App() {
                             <span className="path-badge git">Uncommitted</span>
                         ) : null}
                     </div>
-                    <div
-                        className="editor-context-layer"
-                        onContextMenu={(event) => {
-                            event.preventDefault();
-                            event.stopPropagation();
-                            setEditorContextMenu({
-                                visible: true,
-                                x: event.clientX,
-                                y: event.clientY,
-                            });
-                        }}
-                    >
-                        <CodeMirror
-                            value={editorText}
-                            editable={!loadingFile}
-                            onChange={(value) => setEditorText(value)}
-                            onUpdate={(update: ViewUpdate) => {
-                                const sel = update.state.selection.main;
-                                selectionRef.current = {from: sel.from, to: sel.to};
+                    {activeFilePath ? (
+                        <div
+                            className="editor-context-layer"
+                            onMouseDownCapture={(event) => {
+                                if (event.button === 2) {
+                                    event.preventDefault();
+                                }
                             }}
-                            extensions={[
-                            markdown({
-                                codeLanguages: languages,
-                            }),
-                            syntaxHighlighting(headingHighlightStyle),
-                            EditorView.lineWrapping,
-                            keymap.of([
-                                {key: "Mod-s", run: () => { void save(); return true; }},
-                                {key: "Mod-Shift-o", run: () => { void chooseFolder(); return true; }},
-                                {key: "Mod-Shift-r", run: () => { void reloadTree(); return true; }},
-                                {key: "Mod-Shift-p", run: () => { setNoteSensitive((v) => !v); return true; }},
-                            ]),
-                            EditorView.theme({
-                                "&": {
-                                    height: "100%",
-                                    fontSize: "16px",
-                                },
-                                ".cm-scroller": {
-                                    overflow: "auto",
-                                    fontFamily: "\"SFMono-Regular\", Consolas, \"Liberation Mono\", Menlo, monospace",
-                                },
-                                ".cm-content": {
-                                    padding: "1rem",
-                                    caretColor: "#e9f0f6",
-                                },
-                                ".cm-line": {
-                                    color: "#d8e3ee",
-                                },
-                                "&.cm-focused": {
-                                    outline: "none",
-                                },
-                            }, {dark: true}),
-                            ]}
-                            theme="dark"
-                            className="main-editor-cm"
-                            basicSetup={{
-                                foldGutter: false,
-                                dropCursor: false,
+                            onContextMenu={(event) => {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                setEditorContextMenu({
+                                    visible: true,
+                                    x: event.clientX,
+                                    y: event.clientY,
+                                });
                             }}
-                        />
-                    </div>
+                        >
+                            <CodeMirror
+                                value={editorText}
+                                editable={!loadingFile}
+                                onChange={(value) => setEditorText(value)}
+                                onUpdate={(update: ViewUpdate) => {
+                                    const sel = update.state.selection.main;
+                                    selectionRef.current = {from: sel.from, to: sel.to};
+                                }}
+                                extensions={[
+                                markdown({
+                                    codeLanguages: languages,
+                                }),
+                                syntaxHighlighting(headingHighlightStyle),
+                                EditorView.lineWrapping,
+                                keymap.of([
+                                    {key: "Mod-s", run: () => { void save(); return true; }},
+                                    {key: "Mod-Shift-o", run: () => { void chooseFolder(); return true; }},
+                                    {key: "Mod-Shift-r", run: () => { void reloadTree(); return true; }},
+                                    {key: "Mod-Shift-p", run: () => { setNoteSensitive((v) => !v); return true; }},
+                                ]),
+                                EditorView.theme({
+                                    "&": {
+                                        height: "100%",
+                                        fontSize: "16px",
+                                    },
+                                    ".cm-scroller": {
+                                        overflow: "auto",
+                                        fontFamily: "\"SFMono-Regular\", Consolas, \"Liberation Mono\", Menlo, monospace",
+                                    },
+                                    ".cm-content": {
+                                        padding: "1rem",
+                                        caretColor: "#e9f0f6",
+                                    },
+                                    ".cm-line": {
+                                        color: "#d8e3ee",
+                                    },
+                                    "&.cm-focused": {
+                                        outline: "none",
+                                    },
+                                }, {dark: true}),
+                                ]}
+                                theme="dark"
+                                className="main-editor-cm"
+                                basicSetup={{
+                                    foldGutter: false,
+                                    dropCursor: false,
+                                }}
+                            />
+                        </div>
+                    ) : (
+                        <div className="empty-editor-state">
+                            <div className="empty-editor-title">No file selected</div>
+                            <div className="empty-editor-text">Select a file in the sidebar or create a new note.</div>
+                            <div className="empty-editor-actions">
+                                <button
+                                    className="toolbar-btn"
+                                    onClick={() => {
+                                        if (!notesDir) return;
+                                        setInputDialog({
+                                            visible: true,
+                                            mode: "createFile",
+                                            path: notesDir,
+                                            value: "new-note.md",
+                                            title: "New File",
+                                            confirmLabel: "Create",
+                                        });
+                                    }}
+                                >
+                                    New File In Root
+                                </button>
+                            </div>
+                        </div>
+                    )}
                 </section>
             </main>
             {contextMenu.visible ? (

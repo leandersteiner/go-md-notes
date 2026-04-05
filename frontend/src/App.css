@@ -3,6 +3,8 @@
     display: flex;
     flex-direction: column;
     min-height: 0;
+    user-select: none;
+    -webkit-user-select: none;
 }
 
 .toolbar {
@@ -22,6 +24,8 @@
     color: #e9f0f6;
     padding: 0 0.6rem;
     min-width: 12rem;
+    user-select: text;
+    -webkit-user-select: text;
 }
 
 .toolbar-btn {
@@ -32,6 +36,11 @@
     color: #f3f8fd;
     padding: 0 0.8rem;
     cursor: pointer;
+}
+
+.toolbar-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
 }
 
 .status {
@@ -219,12 +228,53 @@
 
 .main-editor-cm .cm-editor {
     height: 100%;
+    user-select: text;
+    -webkit-user-select: text;
+}
+
+.main-editor-cm .cm-content,
+.main-editor-cm .cm-line,
+.main-editor-cm .cm-scroller {
+    user-select: text;
+    -webkit-user-select: text;
 }
 
 .editor-context-layer {
     flex: 1 1 auto;
     min-height: 0;
     display: flex;
+}
+
+.empty-editor-state {
+    flex: 1 1 auto;
+    min-height: 0;
+    border: 1px dashed #33485c;
+    border-radius: 10px;
+    background: #0b141d;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+    text-align: center;
+}
+
+.empty-editor-title {
+    color: #dce8f4;
+    font-size: 1.05rem;
+    font-weight: 700;
+}
+
+.empty-editor-text {
+    margin-top: 0.45rem;
+    color: #9eb5ca;
+    font-size: 0.9rem;
+}
+
+.empty-editor-actions {
+    margin-top: 0.75rem;
+    display: flex;
+    gap: 0.5rem;
 }
 
 .tree-context-menu {
@@ -298,6 +348,8 @@
     background: #0d141c;
     color: #e9f0f6;
     padding: 0 0.55rem;
+    user-select: text;
+    -webkit-user-select: text;
 }
 
 .dialog-actions {
