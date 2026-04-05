@@ -19,9 +19,8 @@ import {
 } from "../wailsjs/go/main/App";
 import CodeMirror from "@uiw/react-codemirror";
 import {markdown} from "@codemirror/lang-markdown";
-import {syntaxHighlighting, HighlightStyle} from "@codemirror/language";
-import {tags} from "@lezer/highlight";
-import {EditorView, keymap} from "@codemirror/view";
+import {RangeSetBuilder} from "@codemirror/state";
+import {Decoration, EditorView, highlightActiveLine, highlightActiveLineGutter, keymap, ViewPlugin} from "@codemirror/view";
 import {languages} from "@codemirror/language-data";
 import type {ViewUpdate} from "@codemirror/view";
 
@@ -348,10 +347,21 @@ function App() {
         await deletePath(dialog.path, dialog.isDir);
     };
 
-    const makeSensitive = () => {
+    const toggleSensitive = () => {
         const from = selectionRef.current.from;
         const to = selectionRef.current.to;
         const hasSelection = to > from;
+
+        if (hasSelection) {
+            const existingRegion = findSensitiveRegionAroundSelection(editorText, from, to);
+            if (existingRegion) {
+                const next = removeSensitiveRegionMarkers(editorText, existingRegion.startLine, existingRegion.endLine);
+                setEditorText(next);
+                setEditorContextMenu((prev) => ({...prev, visible: false}));
+                return;
+            }
+        }
+
         const selected = hasSelection ? editorText.slice(from, to) : "";
         const needsLeadingNewline = from > 0 && editorText[from - 1] !== "\n";
         const needsTrailingNewline = to < editorText.length && editorText[to] !== "\n";
@@ -514,8 +524,10 @@ function App() {
                                 markdown({
                                     codeLanguages: languages,
                                 }),
-                                syntaxHighlighting(headingHighlightStyle),
+                                atxHeadingLineDecorations,
                                 EditorView.lineWrapping,
+                                highlightActiveLine(),
+                                highlightActiveLineGutter(),
                                 keymap.of([
                                     {key: "Mod-s", run: () => { void save(); return true; }},
                                     {key: "Mod-Shift-o", run: () => { void chooseFolder(); return true; }},
@@ -526,6 +538,8 @@ function App() {
                                     "&": {
                                         height: "100%",
                                         fontSize: "16px",
+                                        backgroundColor: "#0f1720",
+                                        color: "#e6eef7",
                                     },
                                     ".cm-scroller": {
                                         overflow: "auto",
@@ -533,10 +547,58 @@ function App() {
                                     },
                                     ".cm-content": {
                                         padding: "1rem",
-                                        caretColor: "#e9f0f6",
+                                        caretColor: "#f2f7ff",
                                     },
                                     ".cm-line": {
-                                        color: "#d8e3ee",
+                                        color: "#e2ebf5",
+                                    },
+                                    ".cm-line.cm-atx-h1": {
+                                        fontSize: "2em",
+                                        fontWeight: "700",
+                                        color: "#f5fbff",
+                                    },
+                                    ".cm-line.cm-atx-h2": {
+                                        fontSize: "1.7em",
+                                        fontWeight: "700",
+                                        color: "#eef8ff",
+                                    },
+                                    ".cm-line.cm-atx-h3": {
+                                        fontSize: "1.45em",
+                                        fontWeight: "700",
+                                        color: "#e7f4ff",
+                                    },
+                                    ".cm-line.cm-atx-h4": {
+                                        fontSize: "1.25em",
+                                        fontWeight: "700",
+                                        color: "#ddecfb",
+                                    },
+                                    ".cm-line.cm-atx-h5": {
+                                        fontSize: "1.1em",
+                                        fontWeight: "700",
+                                        color: "#d2e3f3",
+                                    },
+                                    ".cm-line.cm-atx-h6": {
+                                        fontSize: "1em",
+                                        fontWeight: "700",
+                                        color: "#c6d8e8",
+                                    },
+                                    ".cm-cursor, .cm-dropCursor": {
+                                        borderLeftColor: "#f3f8ff",
+                                        borderLeftWidth: "2px",
+                                    },
+                                    ".cm-selectionBackground, ::selection": {
+                                        backgroundColor: "#335a7a !important",
+                                    },
+                                    ".cm-activeLine": {
+                                        backgroundColor: "#1a2a39",
+                                    },
+                                    ".cm-activeLineGutter": {
+                                        backgroundColor: "#1a2a39",
+                                    },
+                                    ".cm-gutters": {
+                                        backgroundColor: "#0f1720",
+                                        color: "#8da6bf",
+                                        borderRight: "1px solid #2c4155",
                                     },
                                     "&.cm-focused": {
                                         outline: "none",
@@ -660,9 +722,9 @@ function App() {
                 >
                     <button
                         className="tree-context-item"
-                        onClick={() => makeSensitive()}
+                        onClick={() => toggleSensitive()}
                     >
-                        Make Sensitive
+                        Toggle Sensitive
                     </button>
                 </div>
             ) : null}
@@ -800,10 +862,6 @@ function App() {
                     </div>
                 </div>
             ) : null}
-            <div className="hint">
-                Single pane editor. Inline sensitive sections use markers: &lt;!-- sensitive:start --&gt; / &lt;!-- sensitive:end --&gt;.
-                Shortcuts: Ctrl/Cmd+S save, Ctrl/Cmd+Shift+O choose folder, Ctrl/Cmd+Shift+R refresh tree, Ctrl/Cmd+Shift+P toggle full-note sensitivity.
-            </div>
         </div>
     );
 
@@ -826,14 +884,44 @@ const newLocalBlockID = (): string => {
 const MARKER_START = "<!-- sensitive:start -->";
 const MARKER_END = "<!-- sensitive:end -->";
 
-const headingHighlightStyle = HighlightStyle.define([
-    {tag: tags.heading1, fontSize: "2em", fontWeight: "700", color: "#f5fbff"},
-    {tag: tags.heading2, fontSize: "1.7em", fontWeight: "700", color: "#eef8ff"},
-    {tag: tags.heading3, fontSize: "1.45em", fontWeight: "700", color: "#e7f4ff"},
-    {tag: tags.heading4, fontSize: "1.25em", fontWeight: "700", color: "#ddecfb"},
-    {tag: tags.heading5, fontSize: "1.1em", fontWeight: "700", color: "#d2e3f3"},
-    {tag: tags.heading6, fontSize: "1em", fontWeight: "700", color: "#c6d8e8"},
-]);
+const atxHeadingLineDecorations = ViewPlugin.fromClass(class {
+    decorations;
+
+    constructor(view: EditorView) {
+        this.decorations = this.buildDecorations(view);
+    }
+
+    update(update: ViewUpdate) {
+        if (update.docChanged || update.viewportChanged) {
+            this.decorations = this.buildDecorations(update.view);
+        }
+    }
+
+    buildDecorations(view: EditorView) {
+        const builder = new RangeSetBuilder<Decoration>();
+
+        for (const {from, to} of view.visibleRanges) {
+            let line = view.state.doc.lineAt(from);
+            while (line.from <= to) {
+                const match = line.text.match(/^(#{1,6})\s+/);
+                if (match) {
+                    const level = Math.min(match[1].length, 6);
+                    builder.add(line.from, line.from, Decoration.line({
+                        class: `cm-atx-h${level}`,
+                    }));
+                }
+                if (line.to >= to) {
+                    break;
+                }
+                line = view.state.doc.line(line.number + 1);
+            }
+        }
+
+        return builder.finish();
+    }
+}, {
+    decorations: (value) => value.decorations,
+});
 
 const parseSensitiveBlocksFromLines = (lines: string[], noteSensitive: boolean): Block[] => {
     const withIDs = lines.map((line) => ({
@@ -891,6 +979,64 @@ const buildEditorLines = (stored: Block[], noteSensitive: boolean): string[] => 
     }
 
     return result;
+};
+
+const findSensitiveRegionAroundSelection = (
+    text: string,
+    from: number,
+    to: number,
+): { startLine: number; endLine: number } | null => {
+    const lines = text.split("\n");
+    const lineStarts: number[] = [];
+    let offset = 0;
+    for (const line of lines) {
+        lineStarts.push(offset);
+        offset += line.length + 1;
+    }
+
+    const posToLine = (pos: number) => {
+        let idx = 0;
+        for (let i = 0; i < lineStarts.length; i++) {
+            if (lineStarts[i] <= pos) idx = i;
+            else break;
+        }
+        return idx;
+    };
+
+    const startLine = posToLine(from);
+    const endLine = posToLine(Math.max(from, to - 1));
+
+    let openStart = -1;
+    for (let i = 0; i < lines.length; i++) {
+        const trimmed = lines[i].trim();
+        if (trimmed === MARKER_START) {
+            openStart = i;
+            continue;
+        }
+        if (trimmed === MARKER_END && openStart >= 0) {
+            const contentStart = openStart + 1;
+            const contentEnd = i - 1;
+            if (
+                (
+                    (contentStart <= contentEnd &&
+                        startLine >= contentStart &&
+                        endLine <= contentEnd) ||
+                    (startLine <= openStart && endLine >= i)
+                )
+            ) {
+                return {startLine: openStart, endLine: i};
+            }
+            openStart = -1;
+        }
+    }
+
+    return null;
+};
+
+const removeSensitiveRegionMarkers = (text: string, markerStartLine: number, markerEndLine: number): string => {
+    const lines = text.split("\n");
+    const next = lines.filter((_, index) => index !== markerStartLine && index !== markerEndLine);
+    return next.join("\n");
 };
 
 const TreeNodes = ({

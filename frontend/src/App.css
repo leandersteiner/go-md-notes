@@ -229,11 +229,15 @@
     min-height: 0;
     border: 1px solid #2f3a47;
     border-radius: 10px;
-    background: #0d141c;
+    background: #0f1720;
+    overflow: hidden;
 }
 
 .main-editor-cm .cm-editor {
     height: 100%;
+    border-radius: 10px;
+    overflow: hidden;
+    background: #0f1720;
     user-select: text;
     -webkit-user-select: text;
 }
@@ -241,8 +245,41 @@
 .main-editor-cm .cm-content,
 .main-editor-cm .cm-line,
 .main-editor-cm .cm-scroller {
+    background: #0f1720;
     user-select: text;
     -webkit-user-select: text;
+}
+
+.main-editor-cm .cm-editor,
+.main-editor-cm .cm-content,
+.main-editor-cm .cm-line,
+.main-editor-cm .cm-line * {
+    user-select: text !important;
+    -webkit-user-select: text !important;
+}
+
+.main-editor-cm .cm-editor .cm-selectionLayer .cm-selectionBackground,
+.main-editor-cm .cm-editor .cm-selectionBackground {
+    background-color: rgba(79, 130, 171, 0.42) !important;
+}
+
+.main-editor-cm .cm-editor .cm-content ::selection,
+.main-editor-cm .cm-editor .cm-line ::selection {
+    background-color: rgba(79, 130, 171, 0.42) !important;
+    color: #eef6ff;
+}
+
+.main-editor-cm .cm-editor .cm-activeLine {
+    background-color: rgba(56, 89, 117, 0.38) !important;
+}
+
+.main-editor-cm .cm-editor .cm-activeLineGutter {
+    background-color: rgba(56, 89, 117, 0.38) !important;
+}
+
+.main-editor-cm .cm-gutterElement {
+    display: flex;
+    align-items: center;
 }
 
 .editor-context-layer {
@@ -404,12 +441,4 @@
     width: 100%;
     margin-top: 0.45rem;
     text-align: left;
-}
-
-.hint {
-    border-top: 1px solid #2f3a47;
-    color: #8ea7be;
-    padding: 0.5rem 1rem;
-    text-align: left;
-    font-size: 0.9rem;
 }
