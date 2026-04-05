@@ -50,9 +50,9 @@ type WorkspaceState struct {
 
 var attrRegex = regexp.MustCompile(`([a-zA-Z]+)="([^"]*)"`)
 
-const blockHeaderPrefix = "<!-- go-md-notes:block"
-const blockFooter = "<!-- /go-md-notes:block -->"
-const metaPrefix = "<!-- go-md-notes:meta"
+const noteMetaPrefix = "<!-- go-md-notes:note"
+const encryptedRegionPrefix = "<!-- go-md-notes:encrypted"
+const encryptedRegionFooter = "<!-- /go-md-notes:encrypted -->"
 
 // NewApp creates a new App application struct
 func NewApp() *App {
@@ -158,42 +158,52 @@ func (a *App) SaveNote(path string, blocks []Block, password string, noteSensiti
 		blocks = []Block{{ID: newBlockID(), Markdown: "", Sensitive: false}}
 	}
 
-	var out strings.Builder
-	out.WriteString(fmt.Sprintf(`%s note_sensitive="%t" -->`, metaPrefix, noteSensitive))
-	out.WriteString("\n\n")
-	for _, block := range blocks {
+	lines := make([]string, 0, len(blocks)+8)
+	if noteSensitive {
+		lines = append(lines, fmt.Sprintf(`%s sensitive="true" -->`, noteMetaPrefix))
+	}
+
+	for i := 0; i < len(blocks); {
+		block := blocks[i]
 		if block.ID == "" {
 			block.ID = newBlockID()
 		}
-
-		blockSensitive := noteSensitive || block.Sensitive
-		header := fmt.Sprintf(`%s id="%s" sensitive="%t" encrypted="%t"`, blockHeaderPrefix, block.ID, block.Sensitive, blockSensitive)
-		body := block.Markdown
-
-		if blockSensitive {
-			if password == "" {
-				return fmt.Errorf("password required for sensitive block %s", block.ID)
-			}
-			encrypted, err := EncryptWithPassword([]byte(block.Markdown), password)
-			if err != nil {
-				return fmt.Errorf("encrypt block %s: %w", block.ID, err)
-			}
-			header = fmt.Sprintf(`%s salt="%s" nonce="%s"`, header, encrypted.SaltB64, encrypted.NonceB64)
-			body = base64.StdEncoding.EncodeToString(encrypted.Ciphertext)
+		if !noteSensitive && !block.Sensitive {
+			lines = append(lines, block.Markdown)
+			i++
+			continue
 		}
 
-		out.WriteString(header)
-		out.WriteString(" -->\n")
-		out.WriteString(body)
-		out.WriteString("\n")
-		out.WriteString(blockFooter)
-		out.WriteString("\n\n")
+		start := i
+		for i < len(blocks) && (noteSensitive || blocks[i].Sensitive) {
+			i++
+		}
+
+		segmentLines := make([]string, 0, i-start)
+		for _, sensitiveBlock := range blocks[start:i] {
+			segmentLines = append(segmentLines, sensitiveBlock.Markdown)
+		}
+		segmentText := strings.Join(segmentLines, "\n")
+
+		if password == "" {
+			return fmt.Errorf("password required for sensitive block %s", block.ID)
+		}
+		encrypted, err := EncryptWithPassword([]byte(segmentText), password)
+		if err != nil {
+			return fmt.Errorf("encrypt block %s: %w", block.ID, err)
+		}
+
+		lines = append(lines,
+			fmt.Sprintf(`%s salt="%s" nonce="%s" -->`, encryptedRegionPrefix, encrypted.SaltB64, encrypted.NonceB64),
+			base64.StdEncoding.EncodeToString(encrypted.Ciphertext),
+			encryptedRegionFooter,
+		)
 	}
 
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(path, []byte(out.String()), 0o644)
+	return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644)
 }
 
 func (a *App) LoadNote(path string, password string) (NoteDocument, error) {
@@ -208,63 +218,35 @@ func (a *App) LoadNote(path string, password string) (NoteDocument, error) {
 	}
 
 	content := string(data)
-	if !strings.Contains(content, blockHeaderPrefix) {
-		lines := strings.Split(content, "\n")
-		blocks := make([]Block, 0, len(lines))
-		for _, line := range lines {
-			blocks = append(blocks, Block{
-				ID:        newBlockID(),
-				Markdown:  line,
-				Sensitive: false,
-			})
-		}
-		if len(blocks) == 0 {
-			blocks = append(blocks, Block{ID: newBlockID(), Markdown: "", Sensitive: false})
-		}
-		return NoteDocument{Blocks: blocks, NoteSensitive: false}, nil
-	}
 
 	lines := strings.Split(content, "\n")
 	result := make([]Block, 0)
 	noteSensitive := false
 	for i := 0; i < len(lines); i++ {
 		line := strings.TrimSpace(lines[i])
-		if strings.HasPrefix(line, metaPrefix) {
+		if strings.HasPrefix(line, noteMetaPrefix) {
 			attrs := parseAttrs(line)
-			noteSensitive = attrs["note_sensitive"] == "true"
+			noteSensitive = attrs["sensitive"] == "true"
 			continue
 		}
-		if !strings.HasPrefix(line, blockHeaderPrefix) {
-			continue
-		}
-
-		attrs := parseAttrs(line)
-		block := Block{
-			ID:        attrs["id"],
-			Sensitive: attrs["sensitive"] == "true",
-		}
-		if block.ID == "" {
-			block.ID = newBlockID()
-		}
-
-		var bodyLines []string
-		i++
-		for ; i < len(lines); i++ {
-			if strings.TrimSpace(lines[i]) == blockFooter {
-				break
+		if strings.HasPrefix(line, encryptedRegionPrefix) {
+			attrs := parseAttrs(line)
+			var bodyLines []string
+			i++
+			for ; i < len(lines); i++ {
+				if strings.TrimSpace(lines[i]) == encryptedRegionFooter {
+					break
+				}
+				bodyLines = append(bodyLines, lines[i])
 			}
-			bodyLines = append(bodyLines, lines[i])
-		}
-
-		body := strings.Join(bodyLines, "\n")
-		if attrs["encrypted"] == "true" {
+			body := strings.Join(bodyLines, "")
 			if password == "" {
-				return NoteDocument{}, fmt.Errorf("password required for sensitive block %s", block.ID)
+				return NoteDocument{}, errors.New("password required for encrypted region")
 			}
 			encryptedBody := strings.TrimSpace(body)
 			ciphertext, err := base64.StdEncoding.DecodeString(encryptedBody)
 			if err != nil {
-				return NoteDocument{}, fmt.Errorf("decode encrypted block %s: %w", block.ID, err)
+				return NoteDocument{}, fmt.Errorf("decode encrypted region: %w", err)
 			}
 			plaintext, err := DecryptWithPassword(EncryptedBlock{
 				SaltB64:    attrs["salt"],
@@ -272,14 +254,17 @@ func (a *App) LoadNote(path string, password string) (NoteDocument, error) {
 				Ciphertext: ciphertext,
 			}, password)
 			if err != nil {
-				return NoteDocument{}, fmt.Errorf("decrypt block %s: %w", block.ID, err)
+				return NoteDocument{}, fmt.Errorf("decrypt encrypted region: %w", err)
 			}
-			block.Markdown = string(plaintext)
-		} else {
-			block.Markdown = body
+			result = append(result, splitLinesToBlocks(string(plaintext), true)...)
+			continue
 		}
 
-		result = append(result, block)
+		result = append(result, Block{
+			ID:        newBlockID(),
+			Markdown:  lines[i],
+			Sensitive: false,
+		})
 	}
 
 	if len(result) == 0 {
@@ -293,6 +278,19 @@ func (a *App) LoadNote(path string, password string) (NoteDocument, error) {
 		Blocks:        result,
 		NoteSensitive: noteSensitive,
 	}, nil
+}
+
+func splitLinesToBlocks(text string, sensitive bool) []Block {
+	lines := strings.Split(text, "\n")
+	blocks := make([]Block, 0, len(lines))
+	for _, line := range lines {
+		blocks = append(blocks, Block{
+			ID:        newBlockID(),
+			Markdown:  line,
+			Sensitive: sensitive,
+		})
+	}
+	return blocks
 }
 
 func parseAttrs(line string) map[string]string {
