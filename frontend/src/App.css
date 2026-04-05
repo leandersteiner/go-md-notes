@@ -89,6 +89,9 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
 }
 
 .tree-node.file {
@@ -105,6 +108,30 @@
 
 .tree-node.dir {
     color: #a9bfd4;
+}
+
+.tree-icon {
+    width: 22px;
+    min-width: 22px;
+    color: #b6cbe0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.tree-node.file .tree-icon {
+    color: #e6f2ff;
+}
+
+.tree-icon-spacer {
+    width: 20px;
+    height: 17px;
+    display: inline-block;
+}
+
+.tree-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .tree-badge {
@@ -192,6 +219,92 @@
 
 .main-editor-cm .cm-editor {
     height: 100%;
+}
+
+.editor-context-layer {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+}
+
+.tree-context-menu {
+    position: fixed;
+    z-index: 1000;
+    min-width: 150px;
+    background: #111a24;
+    border: 1px solid #2f3f50;
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+    padding: 0.25rem;
+    display: flex;
+    flex-direction: column;
+}
+
+.tree-context-item {
+    border: none;
+    background: transparent;
+    color: #d9e6f3;
+    text-align: left;
+    padding: 0.45rem 0.55rem;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.86rem;
+}
+
+.tree-context-item:hover {
+    background: #203246;
+}
+
+.tree-context-item.danger {
+    color: #ffb3b3;
+}
+
+.tree-context-item.danger:hover {
+    background: #4a2323;
+}
+
+.dialog-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1100;
+}
+
+.dialog-panel {
+    min-width: 320px;
+    max-width: 520px;
+    background: #111a24;
+    border: 1px solid #2f3f50;
+    border-radius: 10px;
+    padding: 0.8rem;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+}
+
+.dialog-title {
+    color: #dce8f4;
+    margin-bottom: 0.6rem;
+    line-height: 1.35;
+}
+
+.dialog-input {
+    width: 100%;
+    box-sizing: border-box;
+    height: 2rem;
+    border-radius: 6px;
+    border: 1px solid #3a4f63;
+    background: #0d141c;
+    color: #e9f0f6;
+    padding: 0 0.55rem;
+}
+
+.dialog-actions {
+    margin-top: 0.75rem;
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.45rem;
 }
 
 .hint {

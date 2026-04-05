@@ -4,6 +4,12 @@ import {main} from '../models';
 
 export function ChooseNotesDir():Promise<main.WorkspaceState>;
 
+export function CreateFile(arg1:string,arg2:string):Promise<string>;
+
+export function CreateFolder(arg1:string,arg2:string):Promise<string>;
+
+export function DeletePath(arg1:string):Promise<void>;
+
 export function Greet(arg1:string):Promise<string>;
 
 export function InitWorkspace():Promise<main.WorkspaceState>;
@@ -11,5 +17,7 @@ export function InitWorkspace():Promise<main.WorkspaceState>;
 export function LoadNote(arg1:string,arg2:string):Promise<main.NoteDocument>;
 
 export function RefreshWorkspace():Promise<main.WorkspaceState>;
+
+export function RenamePath(arg1:string,arg2:string):Promise<string>;
 
 export function SaveNote(arg1:string,arg2:Array<main.Block>,arg3:string,arg4:boolean):Promise<void>;

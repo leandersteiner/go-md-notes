@@ -6,6 +6,18 @@ export function ChooseNotesDir() {
   return window['go']['main']['App']['ChooseNotesDir']();
 }
 
+export function CreateFile(arg1, arg2) {
+  return window['go']['main']['App']['CreateFile'](arg1, arg2);
+}
+
+export function CreateFolder(arg1, arg2) {
+  return window['go']['main']['App']['CreateFolder'](arg1, arg2);
+}
+
+export function DeletePath(arg1) {
+  return window['go']['main']['App']['DeletePath'](arg1);
+}
+
 export function Greet(arg1) {
   return window['go']['main']['App']['Greet'](arg1);
 }
@@ -20,6 +32,10 @@ export function LoadNote(arg1, arg2) {
 
 export function RefreshWorkspace() {
   return window['go']['main']['App']['RefreshWorkspace']();
+}
+
+export function RenamePath(arg1, arg2) {
+  return window['go']['main']['App']['RenamePath'](arg1, arg2);
 }
 
 export function SaveNote(arg1, arg2, arg3, arg4) {

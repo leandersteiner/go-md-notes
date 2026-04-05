@@ -166,6 +166,105 @@ func (a *App) RefreshWorkspace() (WorkspaceState, error) {
 	}, nil
 }
 
+func (a *App) RenamePath(path string, newName string) (string, error) {
+	if strings.TrimSpace(newName) == "" {
+		return "", errors.New("new name is required")
+	}
+	if strings.Contains(newName, "/") || strings.Contains(newName, "\\") {
+		return "", errors.New("new name must not contain path separators")
+	}
+
+	resolved, err := resolveWorkspacePath(path)
+	if err != nil {
+		return "", err
+	}
+
+	target := filepath.Join(filepath.Dir(resolved), newName)
+	if err := ensurePathInsideNotesDir(target); err != nil {
+		return "", err
+	}
+	if _, err := os.Stat(target); err == nil {
+		return "", errors.New("target already exists")
+	}
+
+	if err := os.Rename(resolved, target); err != nil {
+		return "", err
+	}
+	return target, nil
+}
+
+func (a *App) DeletePath(path string) error {
+	resolved, err := resolveWorkspacePath(path)
+	if err != nil {
+		return err
+	}
+	return os.RemoveAll(resolved)
+}
+
+func (a *App) CreateFile(parentDir string, name string) (string, error) {
+	if strings.TrimSpace(name) == "" {
+		return "", errors.New("file name is required")
+	}
+	if strings.Contains(name, "/") || strings.Contains(name, "\\") {
+		return "", errors.New("file name must not contain path separators")
+	}
+
+	parent, err := resolveWorkspacePath(parentDir)
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Stat(parent)
+	if err != nil {
+		return "", err
+	}
+	if !info.IsDir() {
+		return "", errors.New("parent path is not a directory")
+	}
+
+	target := filepath.Join(parent, name)
+	if err := ensurePathInsideNotesDir(target); err != nil {
+		return "", err
+	}
+	if _, err := os.Stat(target); err == nil {
+		return "", errors.New("file already exists")
+	}
+
+	if err := os.WriteFile(target, []byte(""), 0o644); err != nil {
+		return "", err
+	}
+	return target, nil
+}
+
+func (a *App) CreateFolder(parentDir string, name string) (string, error) {
+	if strings.TrimSpace(name) == "" {
+		return "", errors.New("folder name is required")
+	}
+	if strings.Contains(name, "/") || strings.Contains(name, "\\") {
+		return "", errors.New("folder name must not contain path separators")
+	}
+
+	parent, err := resolveWorkspacePath(parentDir)
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Stat(parent)
+	if err != nil {
+		return "", err
+	}
+	if !info.IsDir() {
+		return "", errors.New("parent path is not a directory")
+	}
+
+	target := filepath.Join(parent, name)
+	if err := ensurePathInsideNotesDir(target); err != nil {
+		return "", err
+	}
+	if err := os.Mkdir(target, 0o755); err != nil {
+		return "", err
+	}
+	return target, nil
+}
+
 func (a *App) SaveNote(path string, blocks []Block, password string, noteSensitive bool) error {
 	if strings.TrimSpace(path) == "" {
 		return errors.New("path is required")
@@ -428,6 +527,36 @@ func resolveNotePath(path string) string {
 	return filepath.Join(cfg.NotesDir, path)
 }
 
+func resolveWorkspacePath(path string) (string, error) {
+	resolved := resolveNotePath(path)
+	return resolved, ensurePathInsideNotesDir(resolved)
+}
+
+func ensurePathInsideNotesDir(target string) error {
+	cfg, err := loadConfig()
+	if err != nil {
+		return err
+	}
+	if cfg.NotesDir == "" {
+		return errors.New("notes directory is not configured")
+	}
+
+	base := filepath.Clean(cfg.NotesDir)
+	target = filepath.Clean(target)
+
+	rel, err := filepath.Rel(base, target)
+	if err != nil {
+		return err
+	}
+	if rel == "." {
+		return nil
+	}
+	if strings.HasPrefix(rel, "..") {
+		return errors.New("path is outside notes directory")
+	}
+	return nil
+}
+
 func isExistingDir(path string) bool {
 	if strings.TrimSpace(path) == "" {
 		return false
@@ -442,7 +571,7 @@ func gitDirtyPaths(root string) ([]string, error) {
 		return []string{}, nil
 	}
 
-	cmd := exec.Command("git", "-C", root, "status", "--porcelain", "-z")
+	cmd := exec.Command("git", "-C", root, "status", "--porcelain", "-z", "--untracked-files=all")
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, err
