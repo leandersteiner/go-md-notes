@@ -333,6 +333,12 @@ function App() {
                     className="toolbar-input"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
+                    onKeyDown={(event) => {
+                        if (event.key === "Enter" && activeFilePath) {
+                            event.preventDefault();
+                            void loadFile(activeFilePath);
+                        }
+                    }}
                     type="password"
                     placeholder="Password for sensitive blocks"
                 />

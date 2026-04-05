@@ -339,14 +339,15 @@ func (a *App) LoadNote(path string, password string) (NoteDocument, error) {
 	result := make([]Block, 0)
 	noteSensitive := false
 	for i := 0; i < len(lines); i++ {
-		line := strings.TrimSpace(lines[i])
-		if strings.HasPrefix(line, noteMetaPrefix) {
-			attrs := parseAttrs(line)
+		rawLine := lines[i]
+		trimmedLine := strings.TrimSpace(rawLine)
+		if strings.HasPrefix(trimmedLine, noteMetaPrefix) {
+			attrs := parseAttrs(trimmedLine)
 			noteSensitive = attrs["sensitive"] == "true"
 			continue
 		}
-		if strings.HasPrefix(line, encryptedRegionPrefix) {
-			attrs := parseAttrs(line)
+		if strings.HasPrefix(trimmedLine, encryptedRegionPrefix) {
+			attrs := parseAttrs(trimmedLine)
 			var bodyLines []string
 			i++
 			for ; i < len(lines); i++ {
@@ -356,13 +357,37 @@ func (a *App) LoadNote(path string, password string) (NoteDocument, error) {
 				bodyLines = append(bodyLines, lines[i])
 			}
 			body := strings.Join(bodyLines, "")
-			if password == "" {
-				return NoteDocument{}, errors.New("password required for encrypted region")
+
+			appendRawEncryptedRegion := func() {
+				result = append(result, Block{
+					ID:        newBlockID(),
+					Markdown:  rawLine,
+					Sensitive: false,
+				})
+				for _, bodyLine := range bodyLines {
+					result = append(result, Block{
+						ID:        newBlockID(),
+						Markdown:  bodyLine,
+						Sensitive: false,
+					})
+				}
+				result = append(result, Block{
+					ID:        newBlockID(),
+					Markdown:  encryptedRegionFooter,
+					Sensitive: false,
+				})
 			}
+
+			if strings.TrimSpace(password) == "" {
+				appendRawEncryptedRegion()
+				continue
+			}
+
 			encryptedBody := strings.TrimSpace(body)
 			ciphertext, err := base64.StdEncoding.DecodeString(encryptedBody)
 			if err != nil {
-				return NoteDocument{}, fmt.Errorf("decode encrypted region: %w", err)
+				appendRawEncryptedRegion()
+				continue
 			}
 			plaintext, err := DecryptWithPassword(EncryptedBlock{
 				SaltB64:    attrs["salt"],
@@ -370,7 +395,8 @@ func (a *App) LoadNote(path string, password string) (NoteDocument, error) {
 				Ciphertext: ciphertext,
 			}, password)
 			if err != nil {
-				return NoteDocument{}, fmt.Errorf("decrypt encrypted region: %w", err)
+				appendRawEncryptedRegion()
+				continue
 			}
 			result = append(result, splitLinesToBlocks(string(plaintext), true)...)
 			continue
@@ -378,7 +404,7 @@ func (a *App) LoadNote(path string, password string) (NoteDocument, error) {
 
 		result = append(result, Block{
 			ID:        newBlockID(),
-			Markdown:  lines[i],
+			Markdown:  rawLine,
 			Sensitive: false,
 		})
 	}
