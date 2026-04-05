@@ -121,9 +121,14 @@
 .editor-path {
     color: #8ea7be;
     font-size: 0.85rem;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    line-height: 1.35;
+    padding: 0.1rem 0.2rem;
+    border: 1px solid #263646;
+    border-radius: 6px;
+    background: #0b1823;
 }
 
 .main-editor-cm {

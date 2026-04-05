@@ -6,7 +6,7 @@ import CodeMirror from "@uiw/react-codemirror";
 import {markdown} from "@codemirror/lang-markdown";
 import {syntaxHighlighting, HighlightStyle} from "@codemirror/language";
 import {tags} from "@lezer/highlight";
-import {EditorView} from "@codemirror/view";
+import {EditorView, keymap} from "@codemirror/view";
 
 type FileNode = {
     name: string;
@@ -97,6 +97,37 @@ function App() {
         }
     };
 
+    useEffect(() => {
+        const onKeyDown = (event: KeyboardEvent) => {
+            const mod = event.metaKey || event.ctrlKey;
+            if (!mod) return;
+
+            const key = event.key.toLowerCase();
+            if (key === "s") {
+                event.preventDefault();
+                void save();
+                return;
+            }
+            if (event.shiftKey && key === "o") {
+                event.preventDefault();
+                void chooseFolder();
+                return;
+            }
+            if (event.shiftKey && key === "r") {
+                event.preventDefault();
+                void reloadTree();
+                return;
+            }
+            if (event.shiftKey && key === "p") {
+                event.preventDefault();
+                setNoteSensitive((v) => !v);
+            }
+        };
+
+        window.addEventListener("keydown", onKeyDown);
+        return () => window.removeEventListener("keydown", onKeyDown);
+    });
+
     return (
         <div id="App" className="app-shell">
             <header className="toolbar">
@@ -147,6 +178,12 @@ function App() {
                             markdown(),
                             syntaxHighlighting(headingHighlightStyle),
                             EditorView.lineWrapping,
+                            keymap.of([
+                                {key: "Mod-s", run: () => { void save(); return true; }},
+                                {key: "Mod-Shift-o", run: () => { void chooseFolder(); return true; }},
+                                {key: "Mod-Shift-r", run: () => { void reloadTree(); return true; }},
+                                {key: "Mod-Shift-p", run: () => { setNoteSensitive((v) => !v); return true; }},
+                            ]),
                             EditorView.theme({
                                 "&": {
                                     height: "100%",
@@ -179,6 +216,7 @@ function App() {
             </main>
             <div className="hint">
                 Single pane editor. Inline sensitive sections use markers: &lt;!-- sensitive:start --&gt; / &lt;!-- sensitive:end --&gt;.
+                Shortcuts: Ctrl/Cmd+S save, Ctrl/Cmd+Shift+O choose folder, Ctrl/Cmd+Shift+R refresh tree, Ctrl/Cmd+Shift+P toggle full-note sensitivity.
             </div>
         </div>
     );
